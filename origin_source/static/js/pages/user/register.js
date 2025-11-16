@@ -223,10 +223,13 @@
             const data = await response.json();
 
             if (response.ok) {
-                // 응답 body의 accessToken을 localStorage에 저장
+                // 정식 토큰을 localStorage에 저장
                 if (data.data && data.data.accessToken) {
                     setAccessToken(data.data.accessToken);
                 }
+
+                // 게스트 토큰 제거 (sessionStorage)
+                sessionStorage.removeItem('guest_token');
 
                 // 회원가입 성공 - 자동 로그인되어 게시글 목록으로 이동
                 Toast.success('회원가입이 완료되었습니다.', '환영합니다', 2000, () => {
@@ -237,6 +240,8 @@
             }
 
         } catch (error) {
+            // 회원가입 실패 시 게스트 토큰 제거 (다음 시도 시 새로 발급)
+            sessionStorage.removeItem('guest_token');
             handleRegisterError(error);
         } finally {
             state.isSubmitting = false;

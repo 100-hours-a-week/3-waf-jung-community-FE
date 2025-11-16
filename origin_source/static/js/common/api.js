@@ -62,8 +62,9 @@ async function getGuestToken() {
         // data 필드가 직접 토큰 문자열임 (accessToken 래핑 없음)
         const guestToken = data.data;
 
-        // localStorage에 임시 저장 (회원가입 성공 시 정식 토큰으로 교체됨)
-        setAccessToken(guestToken);
+        // sessionStorage에 저장 (탭 닫으면 자동 삭제)
+        // 정식 토큰(localStorage)과 분리 관리
+        sessionStorage.setItem('guest_token', guestToken);
 
         return guestToken;
     } catch (error) {
@@ -498,7 +499,8 @@ const LAMBDA_API_URL = window.LAMBDA_API_URL || null;
  * @returns {Promise<{imageUrl: string, fileSize: number, originalFilename: string}>} - S3 이미지 정보
  */
 async function uploadImageToLambda(file) {
-    const accessToken = getAccessToken();
+    // 게스트 토큰 우선 사용 (회원가입 시), 없으면 정식 토큰 (로그인 후)
+    const accessToken = sessionStorage.getItem('guest_token') || getAccessToken();
 
     try {
         const response = await fetch(`${LAMBDA_API_URL}/images`, {
