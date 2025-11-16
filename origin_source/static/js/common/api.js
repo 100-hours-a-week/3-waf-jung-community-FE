@@ -505,8 +505,9 @@ async function uploadImageToLambda(file) {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${accessToken}`,
-                'Content-Type': file.type,  // image/jpeg, image/png, image/gif
-                'x-filename': file.name     // 원본 파일명
+                'Content-Type': file.type  // image/jpeg, image/png, image/gif
+                // x-filename 헤더 제거: HTTP 헤더는 ISO-8859-1만 지원 (한글 불가)
+                // Lambda에서 자동 생성: image-{timestamp}
             },
             body: file  // 바이너리 직접 전송 (FormData 아님)
         });
