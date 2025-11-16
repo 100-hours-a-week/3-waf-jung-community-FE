@@ -9,10 +9,8 @@ const PORT = process.env.PORT || 3000;
 // API Base URL 설정 (환경변수 기반)
 // ========================================
 // 로컬: localhost:8080
-// EC2: EC2_PUBLIC_IP 환경변수 사용 (Public IP로 브라우저 접근)
-const API_BASE_URL = process.env.EC2_PUBLIC_IP
-  ? `http://${process.env.EC2_PUBLIC_IP}:8080`
-  : 'http://localhost:8080';
+// 프로덕션: BACKEND_URL 환경변수 사용 (ALB DNS)
+const API_BASE_URL = process.env.BACKEND_URL || 'http://localhost:8080';
 
 // API Gateway URL (이미지 업로드용, 선택)
 // - 개발: null (Multipart fallback)
@@ -120,17 +118,13 @@ app.get('/board/:id/edit', (req, res) => {
 // 백엔드 SSR 페이지 리다이렉트 (Thymeleaf)
 // ========================================
 app.get('/terms', (req, res) => {
-  const backendUrl = process.env.EC2_PUBLIC_IP
-    ? `http://${process.env.EC2_PUBLIC_IP}:8080/terms`
-    : 'http://localhost:8080/terms';
-  res.redirect(backendUrl);
+  const backendUrl = process.env.BACKEND_URL || 'http://localhost:8080';
+  res.redirect(`${backendUrl}/terms`);
 });
 
 app.get('/privacy', (req, res) => {
-  const backendUrl = process.env.EC2_PUBLIC_IP
-    ? `http://${process.env.EC2_PUBLIC_IP}:8080/privacy`
-    : 'http://localhost:8080/privacy';
-  res.redirect(backendUrl);
+  const backendUrl = process.env.BACKEND_URL || 'http://localhost:8080';
+  res.redirect(`${backendUrl}/privacy`);
 });
 
 // ========================================
