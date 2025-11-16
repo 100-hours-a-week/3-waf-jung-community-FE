@@ -58,7 +58,9 @@ async function getGuestToken() {
         }
 
         const data = await response.json();
-        const guestToken = data.data.accessToken;
+        // 백엔드 응답: { message, data: "token_string", timestamp }
+        // data 필드가 직접 토큰 문자열임 (accessToken 래핑 없음)
+        const guestToken = data.data;
 
         // localStorage에 임시 저장 (회원가입 성공 시 정식 토큰으로 교체됨)
         setAccessToken(guestToken);
