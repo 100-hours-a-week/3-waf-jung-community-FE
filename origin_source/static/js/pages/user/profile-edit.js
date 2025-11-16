@@ -201,94 +201,57 @@
     elements.saveButton.textContent = '저장 중...';
 
     try {
-      const formData = new FormData();
-      formData.append('nickname', nickname);
-      
-      // 이미지 처리
+      // 1단계: 새 이미지 업로드 (선택)
+      let imageId = null;
+      if (state.selectedFile) {
+        try {
+          const imageResult = await uploadImage(state.selectedFile);
+          imageId = imageResult.imageId;
+        } catch (error) {
+          console.error('Image upload failed:', error);
+          const translatedMessage = translateErrorCode(error.message);
+          Toast.error(translatedMessage || '이미지 업로드에 실패했습니다.', '오류');
+          state.isSubmitting = false;
+          elements.saveButton.disabled = false;
+          elements.saveButton.textContent = '저장';
+          return;
+        }
+      }
+
+      // 2단계: 프로필 수정 (JSON)
+      const requestBody = { nickname };
       if (state.removeExistingImage) {
-        // 이미지 제거 신호 전송
-        formData.append('removeImage', 'true');
-      } else if (state.selectedFile) {
-        // 새 이미지 업로드
-        formData.append('profileImage', state.selectedFile);
+        requestBody.removeImage = true;
+      } else if (imageId) {
+        requestBody.imageId = imageId;
       }
 
-      // Access Token 가져오기
-      const accessToken = getAccessToken();
-
-      // CSRF 토큰 가져오기 (getCsrfToken from api.js)
-      const csrfToken = getCsrfToken();
-
-      if (!accessToken) {
-        Toast.error('인증 정보가 없습니다. 다시 로그인해주세요.', '인증 오류');
-        setTimeout(() => {
-          window.location.href = '/page/login';
-        }, 2000);
-        return;
-      }
-
-      // 헤더 구성 (CSRF 토큰이 있을 때만 추가)
-      const headers = {
-        'Authorization': `Bearer ${accessToken}`
-      };
-      if (csrfToken) {
-        headers['X-XSRF-TOKEN'] = csrfToken;
-      }
-
-      // API 호출 (multipart/form-data이므로 fetch 직접 사용)
+      // fetchWithAuth 사용 (401 자동 재시도 포함)
       let response;
       try {
-        response = await fetch(`${API_BASE_URL}/users/${state.userId}`, {
+        response = await fetchWithAuth(`/users/${state.userId}`, {
           method: 'PATCH',
-          headers: headers,
-          credentials: 'include',  // HttpOnly Cookie 자동 전송
-          body: formData  // Content-Type 자동 설정 (multipart/form-data)
+          body: JSON.stringify(requestBody)
         });
+
+        // fetchWithAuth는 성공 시 data.data 반환, 204는 { success: true }
+        disableUnsavedChangesWarning();  // beforeunload 경고 비활성화
+        Toast.success('프로필이 수정되었습니다.', '수정 완료', 3000, () => {
+          window.location.reload();
+        });
+
       } catch (error) {
-        // Network Error 감지 (TypeError "Failed to fetch")
-        if (error instanceof TypeError && error.message === 'Failed to fetch') {
-          const networkError = new Error('NETWORK-ERROR');
-          networkError.originalError = error;
-          throw networkError;
-        }
-        throw error;
-      }
-
-      // 401 Unauthorized - 토큰 갱신 후 재시도
-      if (response.status === 401) {
-        const refreshed = await refreshAccessToken();
-
-        if (refreshed) {
-          // 토큰 갱신 성공 - 재시도
-          return handleSaveProfile(e);  // 재귀 호출로 재시도
-        } else {
-          // 토큰 갱신 실패 - 로그인 페이지로
+        // fetchWithAuth 내부에서 401 처리 실패 시 여기로 옴
+        if (error.message === 'Authentication failed') {
           Toast.error('인증이 만료되었습니다. 다시 로그인해주세요.', '인증 만료');
           setTimeout(() => {
             window.location.href = '/page/login';
           }, 2000);
           return;
         }
+        throw error;
       }
 
-      if (response.status === 204) {
-        disableUnsavedChangesWarning();  // beforeunload 경고 비활성화
-        Toast.success('프로필이 수정되었습니다.', '수정 완료', 3000, () => {
-          window.location.reload();
-        });
-        return;
-      }
-
-      const data = await response.json();
-
-      if (response.ok) {
-        disableUnsavedChangesWarning();  // beforeunload 경고 비활성화
-        Toast.success('프로필이 수정되었습니다.', '수정 완료', 3000, () => {
-          window.location.reload();
-        });
-      } else {
-        throw new Error(data.message);
-      }
     } catch (error) {
       console.error('[Profile Edit] Failed to update profile:', error);
 

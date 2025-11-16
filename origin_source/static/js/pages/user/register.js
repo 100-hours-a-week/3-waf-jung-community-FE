@@ -144,7 +144,8 @@
 
     /**
      * 폼 제출 핸들러
-     * POST /users/signup (multipart/form-data)
+     * POST /users/signup (application/json)
+     * - 2단계 업로드: 프로필 이미지 → imageId 획득 → JSON 방식 회원가입
      */
     async function handleSubmit(event) {
         event.preventDefault();
@@ -164,27 +165,34 @@
         const nickname = sanitizeInput(elements.nicknameInput.value);
         const profileImage = elements.profileImageInput.files[0];
 
-        // FormData 구성
-        const formData = new FormData();
-        formData.append('email', email);
-        formData.append('password', password);
-        formData.append('nickname', nickname);
-
-        if (profileImage) {
-            formData.append('profileImage', profileImage);  // camelCase로 통일
-        }
-
         try {
             state.isSubmitting = true;
             setLoading(true);
 
-            // API 호출 (multipart/form-data이므로 fetch 직접 사용)
+            // 1단계: 프로필 이미지 업로드 (선택)
+            let imageId = null;
+            if (profileImage) {
+                try {
+                    const imageResult = await uploadImage(profileImage);
+                    imageId = imageResult.imageId;
+                } catch (error) {
+                    console.error('Image upload failed:', error);
+                    const translatedMessage = translateErrorCode(error.message);
+                    showError('profileImage', translatedMessage || '이미지 업로드에 실패했습니다.');
+                    state.isSubmitting = false;
+                    setLoading(false);
+                    return;
+                }
+            }
+
+            // 2단계: 회원가입 (JSON)
             let response;
             try {
                 response = await fetch(`${window.API_BASE_URL}/users/signup`, {
                     method: 'POST',
                     credentials: 'include',  // HttpOnly Cookie 수신
-                    body: formData // Content-Type 자동 설정
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password, nickname, imageId })
                 });
             } catch (error) {
                 // Network Error 감지 (TypeError "Failed to fetch")

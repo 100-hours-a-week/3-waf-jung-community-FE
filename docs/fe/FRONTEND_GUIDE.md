@@ -207,49 +207,149 @@ if (result.data && result.data.access_token) {
 
 ## 4. 파일 업로드
 
-### 4.1 Multipart 요청
+### 4.1 Lambda 2단계 업로드 (권장)
 
+**전략**: Lambda (S3 업로드) + Backend (메타데이터 등록)
 **제약**: JPG/PNG/GIF, 최대 5MB
 
-**참조**: [LLD.md Section 7.5 - 이미지 업로드 전략](../be/LLD.md#75-이미지-업로드-전략) (2가지 패턴 비교)
+**uploadImage() 래퍼 함수 사용:**
+```javascript
+// api.js의 uploadImage() 함수가 환경변수에 따라 자동 선택
+// - LAMBDA_API_URL 있으면: Lambda 2단계 업로드
+// - LAMBDA_API_URL 없으면: Multipart 업로드 (fallback)
 
-### 4.2 회원가입 예시
+const result = await uploadImage(file);
+// { imageId: 123, imageUrl: "https://..." }
+```
+
+**직접 구현 (2단계):**
+```javascript
+// Step 1: Lambda → S3
+const step1 = await uploadImageToLambda(file);
+// { imageUrl, fileSize, originalFilename }
+
+// Step 2: Backend → DB
+const step2 = await registerImageMetadata(
+  step1.imageUrl,
+  step1.fileSize,
+  step1.originalFilename
+);
+// { imageId, imageUrl }
+
+const imageId = step2.imageId;
+```
+
+**참조**: [API.md Section 4.1-4.2](../be/API.md#41-lambda-이미지-업로드-step-1-s3) (Lambda 엔드포인트 명세)
+
+---
+
+### 4.2 회원가입 예시 (JSON 방식)
 
 ```javascript
-const formData = new FormData();
-formData.append('email', 'test@example.com');
-formData.append('password', 'Test1234!');
-formData.append('nickname', '테스트유저');
-formData.append('profileImage', fileInput.files[0]);  // 선택
+// 1단계: 프로필 이미지 업로드 (선택)
+let imageId = null;
+if (profileImageFile) {
+  const result = await uploadImage(profileImageFile);
+  imageId = result.imageId;
+}
 
+// 2단계: 회원가입 (JSON)
 const response = await fetch('http://localhost:8080/users/signup', {
   method: 'POST',
-  body: formData  // Content-Type 자동 설정
+  headers: { 'Content-Type': 'application/json' },
+  credentials: 'include',  // RT Cookie 수신
+  body: JSON.stringify({ email, password, nickname, imageId })
+});
+
+const data = await response.json();
+if (data.data && data.data.accessToken) {
+  setAccessToken(data.data.accessToken);  // localStorage 저장
+}
+```
+
+**에러 처리**:
+- Lambda 실패: IMAGE-002/003 → Toast 알림 + 폼 유지
+- 메타데이터 등록 실패: IMAGE-004 → S3 고아 이미지 (TTL 1시간 후 배치 삭제)
+
+**참조**: [API.md Section 2.1](../be/API.md#21-회원가입) (JSON 방식 회원가입)
+
+---
+
+### 4.3 프로필 수정 예시 (JSON 방식)
+
+```javascript
+// 1단계: 새 이미지 업로드 (선택)
+let imageId = null;
+if (newProfileImageFile) {
+  const result = await uploadImage(newProfileImageFile);
+  imageId = result.imageId;
+}
+
+// 2단계: 프로필 수정 (JSON)
+await fetchWithAuth(`/users/${userId}`, {
+  method: 'PATCH',
+  body: JSON.stringify({
+    nickname,
+    imageId,  // 새 이미지
+    removeImage: false  // 또는 true (이미지 제거)
+  })
 });
 ```
 
-**에러 처리**: IMAGE-002 (파일 크기 초과), IMAGE-003 (파일 형식 오류) → [API.md](../be/API.md#image-에러-코드) 참조
+**참조**: [API.md Section 2.3](../be/API.md#23-사용자-정보-수정) (JSON 방식 프로필 수정)
 
-### 4.3 이미지 단독 업로드 (게시글용)
+---
+
+### 4.4 게시글 작성 예시
 
 ```javascript
-// 1단계: 이미지 업로드
-const formData = new FormData();
-formData.append('file', fileInput.files[0]);
-const imageResponse = await fetchWithAuth('http://localhost:8080/images', {
-  method: 'POST',
-  body: formData
-});
-const { imageId } = (await imageResponse.json()).data;
+// 1단계: 이미지 업로드 (선택)
+let imageId = null;
+if (imageFile) {
+  const result = await uploadImage(imageFile);
+  imageId = result.imageId;
+}
 
 // 2단계: 게시글 작성
-await fetchWithAuth('http://localhost:8080/posts', {
+await fetchWithAuth('/posts', {
   method: 'POST',
   body: JSON.stringify({ title, content, imageId })
 });
 ```
 
-**참조**: [LLD.md Section 7.5](../be/LLD.md#75-이미지-업로드-전략) (TTL 패턴 상세)
+**참조**:
+- [LLD.md Section 7.5](../be/LLD.md#75-이미지-업로드-전략) (TTL 패턴 상세)
+- `origin_source/static/js/pages/board/write.js` (전체 구현)
+
+---
+
+### 4.5 환경변수 설정
+
+**server.js 설정:**
+```javascript
+app.use((req, res, next) => {
+  res.locals.lambdaApiUrl = process.env.LAMBDA_API_URL || null;
+  next();
+});
+```
+
+**HTML 주입:**
+```html
+<script>
+  window.LAMBDA_API_URL = '<%= lambdaApiUrl %>';
+</script>
+```
+
+**.env 파일:**
+```bash
+# 개발 환경 (Multipart fallback)
+# LAMBDA_API_URL=
+
+# 프로덕션 환경 (Lambda 사용)
+LAMBDA_API_URL=https://{api-id}.execute-api.ap-northeast-2.amazonaws.com
+```
+
+**참조**: `server.js` (환경변수 주입 구현)
 
 ---
 

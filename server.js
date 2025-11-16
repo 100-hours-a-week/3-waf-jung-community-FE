@@ -14,7 +14,13 @@ const API_BASE_URL = process.env.EC2_PUBLIC_IP
   ? `http://${process.env.EC2_PUBLIC_IP}:8080`
   : 'http://localhost:8080';
 
+// API Gateway URL (이미지 업로드용, 선택)
+// - 개발: null (Multipart fallback)
+// - 프로덕션: API Gateway Invoke URL (백그라운드에서 Lambda → S3)
+const LAMBDA_API_URL = process.env.LAMBDA_API_URL || null;
+
 console.log(`🔧 API_BASE_URL: ${API_BASE_URL}`);
+console.log(`🔧 API_GATEWAY_URL (이미지): ${LAMBDA_API_URL || '(Multipart fallback)'}`);
 
 // ========================================
 // HTML 응답 시 API_BASE_URL 주입 미들웨어
@@ -30,8 +36,8 @@ app.use((req, res, next) => {
           return originalSendFile.call(res, filepath, ...args);
         }
 
-        // </head> 앞에 API_BASE_URL 설정 스크립트 주입
-        const apiScript = `<script>window.API_BASE_URL = '${API_BASE_URL}';</script>`;
+        // </head> 앞에 API_BASE_URL + LAMBDA_API_URL 설정 스크립트 주입
+        const apiScript = `<script>window.API_BASE_URL = '${API_BASE_URL}'; window.LAMBDA_API_URL = ${LAMBDA_API_URL ? `'${LAMBDA_API_URL}'` : 'null'};</script>`;
         const modifiedHtml = data.replace('</head>', `${apiScript}\n</head>`);
 
         res.set('Content-Type', 'text/html; charset=utf-8');

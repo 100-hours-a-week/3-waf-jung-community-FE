@@ -289,13 +289,13 @@ function getCurrentUserId() {
 }
 
 /**
- * 이미지 업로드
+ * 이미지 업로드 (Multipart 방식)
  * POST /images (multipart/form-data)
  *
  * @param {File} file - 업로드할 이미지 파일
- * @returns {Promise<{image_id: number, image_url: string}>}
+ * @returns {Promise<{imageId: number, imageUrl: string}>}
  */
-async function uploadImage(file) {
+async function uploadImageMultipart(file) {
     const csrfToken = getCsrfToken();
     const accessToken = getAccessToken();
     const formData = new FormData();
@@ -328,9 +328,45 @@ async function uploadImage(file) {
     }
 
     const data = await response.json();
-    if (response.ok) return data.data; // { image_id, image_url }
+    if (response.ok) return data.data; // { imageId, imageUrl }
 
     throw new Error(data.message);
+}
+
+/**
+ * 이미지 업로드 (환경변수로 API Gateway/Multipart 선택)
+ * - LAMBDA_API_URL 있으면: API Gateway 2단계 업로드 (S3 + 메타데이터)
+ * - LAMBDA_API_URL 없으면: Multipart 업로드 (Backend 직접)
+ *
+ * @param {File} file - 업로드할 이미지 파일
+ * @returns {Promise<{imageId: number, imageUrl: string}>}
+ */
+async function uploadImage(file) {
+    if (LAMBDA_API_URL) {
+        // API Gateway 방식: 2단계 업로드 (Client → API Gateway → Lambda → S3)
+        try {
+            // Step 1: API Gateway → Lambda → S3
+            const step1Result = await uploadImageToLambda(file);
+
+            // Step 2: Backend → DB
+            const step2Result = await registerImageMetadata(
+                step1Result.imageUrl,
+                step1Result.fileSize,
+                step1Result.originalFilename
+            );
+
+            return {
+                imageId: step2Result.imageId,
+                imageUrl: step2Result.imageUrl
+            };
+        } catch (error) {
+            console.error('API Gateway upload failed:', error);
+            throw error;
+        }
+    } else {
+        // Multipart 방식: Backend 직접 업로드
+        return await uploadImageMultipart(file);
+    }
 }
 
 /**
@@ -380,6 +416,7 @@ function translateErrorCode(code) {
         'IMAGE-001': '이미지를 찾을 수 없습니다.',
         'IMAGE-002': '파일 크기는 5MB 이하여야 합니다.',
         'IMAGE-003': '지원하지 않는 파일 형식입니다. (JPG, PNG, GIF만 가능)',
+        'IMAGE-004': '유효하지 않은 이미지 URL입니다.',
 
         // COMMON 에러
         'COMMON-001': '입력 데이터가 올바르지 않습니다.',
@@ -410,27 +447,34 @@ function getCsrfToken() {
 }
 
 // ========================================
-// Lambda 업로드 (패턴 2)
+// API Gateway 이미지 업로드 (2단계 업로드)
 // ========================================
 
-// Lambda API Gateway URL (server.js에서 환경변수로 주입 또는 하드코딩)
-const LAMBDA_API_URL = window.LAMBDA_API_URL || 'https://your-api-gateway-url.execute-api.region.amazonaws.com/prod/upload';
+// API Gateway URL (server.js에서 환경변수로 주입)
+// - 개발: window.LAMBDA_API_URL = null (Multipart fallback)
+// - 프로덕션: window.LAMBDA_API_URL = 'https://{api-id}.execute-api.ap-northeast-2.amazonaws.com'
+// - 실제로는 API Gateway Invoke URL (백그라운드에서 Lambda 실행)
+const LAMBDA_API_URL = window.LAMBDA_API_URL || null;
 
 /**
- * Lambda를 통한 이미지 업로드 (패턴 2 - 1단계)
+ * API Gateway를 통한 이미지 업로드 (Step 1: S3 업로드)
  * Client → API Gateway → Lambda → S3
  *
  * @param {File} file - 업로드할 이미지 파일
- * @returns {Promise<{imageUrl: string}>} - S3 이미지 URL
+ * @returns {Promise<{imageUrl: string, fileSize: number, originalFilename: string}>} - S3 이미지 정보
  */
-async function uploadImageLambda(file) {
-    const formData = new FormData();
-    formData.append('file', file);
+async function uploadImageToLambda(file) {
+    const accessToken = getAccessToken();
 
     try {
-        const response = await fetch(LAMBDA_API_URL, {
+        const response = await fetch(`${LAMBDA_API_URL}/images`, {
             method: 'POST',
-            body: formData
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Content-Type': file.type,  // image/jpeg, image/png, image/gif
+                'x-filename': file.name     // 원본 파일명
+            },
+            body: file  // 바이너리 직접 전송 (FormData 아님)
         });
 
         if (!response.ok) {
@@ -439,7 +483,12 @@ async function uploadImageLambda(file) {
         }
 
         const data = await response.json();
-        return { imageUrl: data.imageUrl };  // Lambda 응답에서 imageUrl 추출
+        // Lambda 응답: { message, data: { imageUrl, fileSize, originalFilename, uploadedAt }, timestamp }
+        return {
+            imageUrl: data.data.imageUrl,
+            fileSize: data.data.fileSize,
+            originalFilename: data.data.originalFilename
+        };
     } catch (error) {
         console.error('Lambda upload error:', error);
         if (error instanceof TypeError && error.message === 'Failed to fetch') {
@@ -452,13 +501,15 @@ async function uploadImageLambda(file) {
 }
 
 /**
- * 이미지 메타데이터 저장 (패턴 2 - 2단계)
+ * 이미지 메타데이터 등록 (Step 2: DB 저장)
  * Client → Backend → DB
  *
  * @param {string} imageUrl - S3 이미지 URL
- * @returns {Promise<{imageId: number}>} - DB에 저장된 imageId
+ * @param {number} fileSize - 파일 크기 (bytes)
+ * @param {string} originalFilename - 원본 파일명
+ * @returns {Promise<{imageId: number, imageUrl: string}>} - DB에 저장된 이미지 정보
  */
-async function saveImageMetadata(imageUrl) {
+async function registerImageMetadata(imageUrl, fileSize, originalFilename) {
     const accessToken = getAccessToken();
     const csrfToken = getCsrfToken();
 
@@ -477,18 +528,22 @@ async function saveImageMetadata(imageUrl) {
             method: 'POST',
             credentials: 'include',
             headers: headers,
-            body: JSON.stringify({ imageUrl })
+            body: JSON.stringify({ imageUrl, fileSize, originalFilename })
         });
 
         if (!response.ok) {
             const error = await response.json();
-            throw new Error(error.message || 'Metadata save failed');
+            throw new Error(error.message || 'Metadata registration failed');
         }
 
         const data = await response.json();
-        return { imageId: data.data.imageId };  // Backend 응답에서 imageId 추출
+        // Backend 응답: { message, data: { imageId, imageUrl, fileSize, originalFilename, createdAt, expiresAt }, timestamp }
+        return {
+            imageId: data.data.imageId,
+            imageUrl: data.data.imageUrl
+        };
     } catch (error) {
-        console.error('Metadata save error:', error);
+        console.error('Metadata registration error:', error);
         if (error instanceof TypeError && error.message === 'Failed to fetch') {
             const networkError = new Error('NETWORK-ERROR');
             networkError.originalError = error;
