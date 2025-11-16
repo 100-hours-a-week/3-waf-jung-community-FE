@@ -38,6 +38,38 @@ function removeAccessToken() {
     localStorage.removeItem('access_token');
 }
 
+/**
+ * 게스트 토큰 발급 (회원가입용)
+ * - 회원가입 시 이미지 업로드를 위한 임시 토큰
+ * - 제한된 권한 (이미지 업로드만 가능)
+ * - 짧은 유효기간 (5분)
+ *
+ * @returns {Promise<string>} - 게스트 Access Token
+ */
+async function getGuestToken() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/auth/guest-token`, {
+            method: 'GET',
+            credentials: 'include'
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to get guest token');
+        }
+
+        const data = await response.json();
+        const guestToken = data.data.accessToken;
+
+        // localStorage에 임시 저장 (회원가입 성공 시 정식 토큰으로 교체됨)
+        setAccessToken(guestToken);
+
+        return guestToken;
+    } catch (error) {
+        console.error('Guest token error:', error);
+        throw error;
+    }
+}
+
 // ========================================
 // JWT 디코딩
 // ========================================

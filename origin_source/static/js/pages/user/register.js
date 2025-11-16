@@ -54,9 +54,25 @@
     /**
      * 초기화
      */
-    function init() {
+    async function init() {
         cacheElements();
         bindEvents();
+        await initGuestToken();  // 게스트 토큰 발급 (이미지 업로드용)
+    }
+
+    /**
+     * 게스트 토큰 발급 (회원가입용)
+     * - 이미지 업로드를 위한 임시 토큰
+     * - 회원가입 성공 시 정식 토큰으로 자동 교체됨
+     */
+    async function initGuestToken() {
+        try {
+            await getGuestToken();
+            console.log('Guest token acquired for image upload');
+        } catch (error) {
+            console.error('Failed to get guest token:', error);
+            // 에러 발생 시에도 계속 진행 (이미지 없이 회원가입 가능)
+        }
     }
 
     /**
