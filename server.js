@@ -6,49 +6,22 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ========================================
-// API Base URL 설정 (환경변수 기반)
+// 서버 시작 시 config.js 생성 (환경변수 기반)
 // ========================================
-// 로컬: localhost:8080
-// 프로덕션: BACKEND_URL 환경변수 사용 (ALB DNS)
-const API_BASE_URL = process.env.BACKEND_URL || 'http://localhost:8080';
-
-// API Gateway URL (이미지 업로드용, 선택)
-// - 개발: null (Multipart fallback)
-// - 프로덕션: API Gateway Invoke URL (백그라운드에서 Lambda → S3)
+const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8080';
 const LAMBDA_API_URL = process.env.LAMBDA_API_URL || null;
 
-console.log(`🔧 API_BASE_URL: ${API_BASE_URL}`);
-console.log(`🔧 API_GATEWAY_URL (이미지): ${LAMBDA_API_URL || '(Multipart fallback)'}`);
+const configPath = path.join(__dirname, 'origin_source', 'static', 'config.js');
+const configContent = `window.APP_CONFIG = {
+  API_BASE_URL: '${BACKEND_URL}',
+  LAMBDA_API_URL: ${LAMBDA_API_URL ? `'${LAMBDA_API_URL}'` : 'null'}
+};`;
 
-// ========================================
-// HTML 응답 시 API_BASE_URL 주입 미들웨어
-// ========================================
-app.use((req, res, next) => {
-  const originalSendFile = res.sendFile;
-
-  res.sendFile = function(filepath, ...args) {
-    if (filepath.endsWith('.html')) {
-      // HTML 파일인 경우 API_BASE_URL 주입
-      fs.readFile(filepath, 'utf8', (err, data) => {
-        if (err) {
-          return originalSendFile.call(res, filepath, ...args);
-        }
-
-        // </head> 앞에 API_BASE_URL + LAMBDA_API_URL 설정 스크립트 주입
-        const apiScript = `<script>window.API_BASE_URL = '${API_BASE_URL}'; window.LAMBDA_API_URL = ${LAMBDA_API_URL ? `'${LAMBDA_API_URL}'` : 'null'};</script>`;
-        const modifiedHtml = data.replace('</head>', `${apiScript}\n</head>`);
-
-        res.set('Content-Type', 'text/html; charset=utf-8');
-        res.send(modifiedHtml);
-      });
-    } else {
-      // 정적 파일은 원래대로
-      return originalSendFile.call(res, filepath, ...args);
-    }
-  };
-
-  next();
-});
+fs.writeFileSync(configPath, configContent);
+console.log(`✅ Generated config.js with BACKEND_URL=${BACKEND_URL}`);
+if (LAMBDA_API_URL) {
+  console.log(`✅ Lambda API URL: ${LAMBDA_API_URL}`);
+}
 
 // ========================================
 // .html 직접 접근 → Clean URL 리다이렉트 (정적 파일 서빙보다 먼저)
@@ -118,13 +91,11 @@ app.get('/board/:id/edit', (req, res) => {
 // 백엔드 SSR 페이지 리다이렉트 (Thymeleaf)
 // ========================================
 app.get('/terms', (req, res) => {
-  const backendUrl = process.env.BACKEND_URL || 'http://localhost:8080';
-  res.redirect(`${backendUrl}/terms`);
+  res.redirect(`${BACKEND_URL}/terms`);
 });
 
 app.get('/privacy', (req, res) => {
-  const backendUrl = process.env.BACKEND_URL || 'http://localhost:8080';
-  res.redirect(`${backendUrl}/privacy`);
+  res.redirect(`${BACKEND_URL}/privacy`);
 });
 
 // ========================================

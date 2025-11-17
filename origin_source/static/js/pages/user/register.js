@@ -54,25 +54,9 @@
     /**
      * 초기화
      */
-    async function init() {
+    function init() {
         cacheElements();
         bindEvents();
-        await initGuestToken();  // 게스트 토큰 발급 (이미지 업로드용)
-    }
-
-    /**
-     * 게스트 토큰 발급 (회원가입용)
-     * - 이미지 업로드를 위한 임시 토큰
-     * - 회원가입 성공 시 정식 토큰으로 자동 교체됨
-     */
-    async function initGuestToken() {
-        try {
-            await getGuestToken();
-            console.log('Guest token acquired for image upload');
-        } catch (error) {
-            console.error('Failed to get guest token:', error);
-            // 에러 발생 시에도 계속 진행 (이미지 없이 회원가입 가능)
-        }
     }
 
     /**
@@ -223,13 +207,10 @@
             const data = await response.json();
 
             if (response.ok) {
-                // 정식 토큰을 localStorage에 저장
+                // 응답 body의 accessToken을 localStorage에 저장
                 if (data.data && data.data.accessToken) {
                     setAccessToken(data.data.accessToken);
                 }
-
-                // 게스트 토큰 제거 (sessionStorage)
-                sessionStorage.removeItem('guest_token');
 
                 // 회원가입 성공 - 자동 로그인되어 게시글 목록으로 이동
                 Toast.success('회원가입이 완료되었습니다.', '환영합니다', 2000, () => {
@@ -240,8 +221,6 @@
             }
 
         } catch (error) {
-            // 회원가입 실패 시 게스트 토큰 제거 (다음 시도 시 새로 발급)
-            sessionStorage.removeItem('guest_token');
             handleRegisterError(error);
         } finally {
             state.isSubmitting = false;

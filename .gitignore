@@ -34,6 +34,9 @@ tmp/
 temp/
 .cache/
 
+# Runtime generated config
+origin_source/static/config.js
+
 # TypeScript
 *.tsbuildinfo
 tsconfig.tsbuildinfo
@@ -75,3 +78,7 @@ AGENTS.md
 test_image/
 .mcp.json
 .amazonq
+
+#Docker
+Dockerfile
+.dockerignore

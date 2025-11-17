@@ -5,10 +5,10 @@
  * 참조: @docs/fe/FRONTEND_GUIDE.md Section 2
  */
 
-// API Base URL (server.js에서 환경변수로 주입됨)
-// - 로컬 개발: window.API_BASE_URL = 'http://localhost:8080'
-// - EC2 배포: window.API_BASE_URL = 'http://{EC2_PRIVATE_IP}:8080'
-const API_BASE_URL = window.API_BASE_URL || 'http://localhost:8080';
+// API Base URL (server.js가 /static/config.js에서 환경변수로 생성)
+// - 로컬 개발: window.APP_CONFIG.API_BASE_URL = 'http://localhost:8080'
+// - EC2 배포: window.APP_CONFIG.API_BASE_URL = 'https://{ALB_DNS}'
+const API_BASE_URL = window.APP_CONFIG?.API_BASE_URL || 'http://localhost:8080';
 const LOGIN_URL = '/page/login';
 
 // ========================================
@@ -36,41 +36,6 @@ function setAccessToken(token) {
  */
 function removeAccessToken() {
     localStorage.removeItem('access_token');
-}
-
-/**
- * 게스트 토큰 발급 (회원가입용)
- * - 회원가입 시 이미지 업로드를 위한 임시 토큰
- * - 제한된 권한 (이미지 업로드만 가능)
- * - 짧은 유효기간 (5분)
- *
- * @returns {Promise<string>} - 게스트 Access Token
- */
-async function getGuestToken() {
-    try {
-        const response = await fetch(`${API_BASE_URL}/auth/guest-token`, {
-            method: 'GET',
-            credentials: 'include'
-        });
-
-        if (!response.ok) {
-            throw new Error('Failed to get guest token');
-        }
-
-        const data = await response.json();
-        // 백엔드 응답: { message, data: "token_string", timestamp }
-        // data 필드가 직접 토큰 문자열임 (accessToken 래핑 없음)
-        const guestToken = data.data;
-
-        // sessionStorage에 저장 (탭 닫으면 자동 삭제)
-        // 정식 토큰(localStorage)과 분리 관리
-        sessionStorage.setItem('guest_token', guestToken);
-
-        return guestToken;
-    } catch (error) {
-        console.error('Guest token error:', error);
-        throw error;
-    }
 }
 
 // ========================================
@@ -485,11 +450,11 @@ function getCsrfToken() {
 // API Gateway 이미지 업로드 (2단계 업로드)
 // ========================================
 
-// API Gateway URL (server.js에서 환경변수로 주입)
-// - 개발: window.LAMBDA_API_URL = null (Multipart fallback)
-// - 프로덕션: window.LAMBDA_API_URL = 'https://{api-id}.execute-api.ap-northeast-2.amazonaws.com'
+// API Gateway URL (server.js가 /static/config.js에서 환경변수로 생성)
+// - 개발: window.APP_CONFIG.LAMBDA_API_URL = null (Multipart fallback)
+// - 프로덕션: window.APP_CONFIG.LAMBDA_API_URL = 'https://{api-id}.execute-api.ap-northeast-2.amazonaws.com'
 // - 실제로는 API Gateway Invoke URL (백그라운드에서 Lambda 실행)
-const LAMBDA_API_URL = window.LAMBDA_API_URL || null;
+const LAMBDA_API_URL = window.APP_CONFIG?.LAMBDA_API_URL || null;
 
 /**
  * API Gateway를 통한 이미지 업로드 (Step 1: S3 업로드)
@@ -499,17 +464,15 @@ const LAMBDA_API_URL = window.LAMBDA_API_URL || null;
  * @returns {Promise<{imageUrl: string, fileSize: number, originalFilename: string}>} - S3 이미지 정보
  */
 async function uploadImageToLambda(file) {
-    // 게스트 토큰 우선 사용 (회원가입 시), 없으면 정식 토큰 (로그인 후)
-    const accessToken = sessionStorage.getItem('guest_token') || getAccessToken();
+    const accessToken = getAccessToken();
 
     try {
         const response = await fetch(`${LAMBDA_API_URL}/images`, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${accessToken}`,
-                'Content-Type': file.type  // image/jpeg, image/png, image/gif
-                // x-filename 헤더 제거: HTTP 헤더는 ISO-8859-1만 지원 (한글 불가)
-                // Lambda에서 자동 생성: image-{timestamp}
+                'Content-Type': file.type,  // image/jpeg, image/png, image/gif
+                'x-filename': file.name     // 원본 파일명
             },
             body: file  // 바이너리 직접 전송 (FormData 아님)
         });
