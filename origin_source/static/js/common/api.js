@@ -7,8 +7,8 @@
 
 // API Base URL (server.js가 /static/config.js에서 환경변수로 생성)
 // - 로컬 개발: window.APP_CONFIG.API_BASE_URL = 'http://localhost:8080'
-// - EC2 배포: window.APP_CONFIG.API_BASE_URL = 'https://{ALB_DNS}'
-const API_BASE_URL = window.APP_CONFIG?.API_BASE_URL || 'http://localhost:8080';
+// - EC2 배포: window.APP_CONFIG.API_BASE_URL = '' (상대 경로, Nginx 라우팅)
+const API_BASE_URL = window.APP_CONFIG?.API_BASE_URL || '';
 const LOGIN_URL = '/page/login';
 
 // ========================================
@@ -452,9 +452,9 @@ function getCsrfToken() {
 
 // API Gateway URL (server.js가 /static/config.js에서 환경변수로 생성)
 // - 개발: window.APP_CONFIG.LAMBDA_API_URL = null (Multipart fallback)
-// - 프로덕션: window.APP_CONFIG.LAMBDA_API_URL = 'https://{api-id}.execute-api.ap-northeast-2.amazonaws.com'
-// - 실제로는 API Gateway Invoke URL (백그라운드에서 Lambda 실행)
-const LAMBDA_API_URL = window.APP_CONFIG?.LAMBDA_API_URL || null;
+// - EC2 배포: window.APP_CONFIG.LAMBDA_API_URL = '/images' (Nginx 라우팅)
+// - 실제로는 Nginx가 /images → API Gateway로 프록시 (백그라운드에서 Lambda 실행)
+const LAMBDA_API_URL = window.APP_CONFIG?.LAMBDA_API_URL || '/images';
 
 /**
  * API Gateway를 통한 이미지 업로드 (Step 1: S3 업로드)
@@ -464,10 +464,15 @@ const LAMBDA_API_URL = window.APP_CONFIG?.LAMBDA_API_URL || null;
  * @returns {Promise<{imageUrl: string, fileSize: number, originalFilename: string}>} - S3 이미지 정보
  */
 async function uploadImageToLambda(file) {
-    const accessToken = getAccessToken();
+    // Guest Token 우선 사용 (회원가입), 없으면 Access Token (로그인 사용자)
+    let accessToken = sessionStorage.getItem('guestToken');
+
+    if (!accessToken) {
+        accessToken = getAccessToken();  // 기존 로직 (로그인 사용자)
+    }
 
     try {
-        const response = await fetch(`${LAMBDA_API_URL}/images`, {
+        const response = await fetch(`${LAMBDA_API_URL}`, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${accessToken}`,
@@ -478,8 +483,11 @@ async function uploadImageToLambda(file) {
         });
 
         if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.message || 'Lambda upload failed');
+            const errorData = await response.json();
+            console.error('Lambda upload error response:', errorData);
+            // Lambda 에러 응답: { message: "IMAGE-002", data: {...}, timestamp: "..." }
+            const errorCode = errorData.message || 'COMMON-999';
+            throw new Error(errorCode);
         }
 
         const data = await response.json();

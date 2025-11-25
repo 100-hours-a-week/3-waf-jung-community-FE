@@ -14,8 +14,8 @@
     LIST_URL: '/board'
   };
 
-  // API_BASE_URL은 server.js에서 window.API_BASE_URL로 주입됨
-  const API_BASE_URL = window.API_BASE_URL || 'http://localhost:8080';
+  // API_BASE_URL은 server.js에서 window.APP_CONFIG로 주입됨
+  const API_BASE_URL = window.APP_CONFIG?.API_BASE_URL || '';
 
   const state = {
     userId: null,

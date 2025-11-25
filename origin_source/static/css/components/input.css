@@ -50,6 +50,37 @@
   cursor: not-allowed;
 }
 
+/* Textarea Element (within input-field) */
+.input-field__textarea {
+  min-height: 120px;
+  padding: var(--input-padding-y) var(--input-padding-x);
+  font-size: var(--input-font-size);
+  font-family: var(--font-family-base);
+  color: var(--color-text-primary);
+  background-color: var(--color-bg-tertiary);
+  border: var(--input-border-width) solid var(--color-border-default);
+  border-radius: var(--input-radius);
+  resize: none;
+  transition: var(--transition-colors);
+  line-height: var(--line-height-relaxed);
+}
+
+.input-field__textarea::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.input-field__textarea:focus {
+  outline: none;
+  border-color: var(--color-border-focus);
+}
+
+.input-field__textarea:disabled,
+.input-field__textarea[readonly] {
+  background-color: rgba(26, 26, 26, 0.5);
+  color: var(--color-text-disabled);
+  cursor: not-allowed;
+}
+
 /* Helper Text */
 .input-field__helper {
   font-size: var(--font-size-xs);

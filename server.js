@@ -8,8 +8,8 @@ const PORT = process.env.PORT || 3000;
 // ========================================
 // 서버 시작 시 config.js 생성 (환경변수 기반)
 // ========================================
-const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8080';
-const LAMBDA_API_URL = process.env.LAMBDA_API_URL || null;
+const BACKEND_URL = process.env.BACKEND_URL !== undefined ? process.env.BACKEND_URL : 'http://localhost:8080';
+const LAMBDA_API_URL = process.env.LAMBDA_API_URL !== undefined ? process.env.LAMBDA_API_URL : null;
 
 const configPath = path.join(__dirname, 'origin_source', 'static', 'config.js');
 const configContent = `window.APP_CONFIG = {

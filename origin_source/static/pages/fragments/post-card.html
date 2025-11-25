@@ -83,7 +83,7 @@
 
     // Author info
     const avatar = card.querySelector('[data-field="authorImage"]');
-    avatar.src = post.author.profileImage || '/images/default-avatar.png';
+    avatar.src = post.author.profileImage || 'https://api.dicebear.com/7.x/avataaars/svg?seed=default';
 
     const authorName = card.querySelector('[data-field="authorName"]');
     authorName.textContent = post.author.nickname;
@@ -154,7 +154,7 @@
       <article class="post-card" data-post-id="${postId}">
         <div class="post-card__header">
           <img
-            src="${author.profileImage || '/images/default-avatar.png'}"
+            src="${author.profileImage || 'https://api.dicebear.com/7.x/avataaars/svg?seed=default'}"
             alt="${author.nickname} 프로필"
             class="post-card__avatar"
           >

@@ -3,9 +3,17 @@
 ## 문서 정보
 
 | 항목 | 내용                        |
-|------|---------------------------|
+|------|**3가지 패턴 비교:**
+
+| 항목 | Multipart 직접 업로드 | 2단계 업로드 | 이미지 제거 |
+|------|---------------------|-------------|-----------|
+| **사용처** | 회원가입, 프로필 수정 | 게시글 작성/수정 | 프로필 수정 |
+| **요청 횟수** | 1회 (multipart/form-data) | 2회 (POST /images → POST /posts) | 1회 (removeImage: true) |
+| **트랜잭션** | 원자적 (이미지 포함) | 독립적 (이미지 선행) | 원자적 (TTL 복원) |
+| **UX 장점** | 간편함, 한 번에 완료 | 미리보기, 임시 저장 지원 | 명시적 제거 의도 |
+| **핵심 메서드** | AuthService.signup() | PostService.createPost() | UserService.updateProfile() |------|
 | 프로젝트명 | KTB Community Platform    |
-| 버전 | 1.6                       |
+| 버전 | 1.7                       |
 | 문서 유형 | Low Level Design Document |
 
 ---
@@ -61,19 +69,19 @@ MySQL Database
 ## 3. 패키지 구조
 
 **주요 패키지:**
-- `config/` - SecurityConfig, JpaAuditingConfig, S3Config, RateLimit, RateLimitAspect
-- `controller/` - AuthController, UserController, PostController, CommentController, ImageController
-- `service/` - AuthService, UserService, PostService, CommentService, LikeService, ImageService
-- `repository/` - UserRepository, PostRepository, CommentRepository, PostLikeRepository, ImageRepository, UserTokenRepository, PostStatsRepository
-- `entity/` - User, Post, Comment, PostLike, Image, UserToken, PostStats, PostImage, PostImageId, BaseTimeEntity, BaseCreatedTimeEntity
-- `dto/request/` - LoginRequest, SignupRequest, PostCreateRequest, CommentCreateRequest
-- `dto/response/` - ApiResponse, UserResponse, PostResponse, CommentResponse
-- `security/` - JwtTokenProvider, JwtAuthenticationFilter, CustomUserDetailsService
-- `exception/` - GlobalExceptionHandler, BusinessException
-- `util/` - PasswordValidator, FileValidator, S3KeyGenerator
-- `enums/` - UserStatus, PostStatus, CommentStatus, UserRole
+- `config/` - 애플리케이션 설정 (Security, JPA, S3, RateLimit)
+- `controller/` - REST API 엔드포인트 (Auth, User, Post, Comment, Image)
+- `service/` - 비즈니스 로직 (Auth, User, Post, Comment, Like, Image)
+- `repository/` - 데이터 접근 계층 (JPA Repository)
+- `entity/` - JPA 엔티티 및 복합키
+- `dto/` - 요청/응답 DTO (request, response)
+- `security/` - JWT 토큰 관리 및 인증 필터
+- `exception/` - 예외 처리 (GlobalExceptionHandler, BusinessException)
+- `util/` - 공통 유틸리티 (Validator, S3KeyGenerator)
+- `enums/` - 열거형 (UserStatus, PostStatus, CommentStatus, UserRole)
 
-**상세 파일 구조:** 필요 시 IDE 탐색 또는 프로젝트 루트 참조
+**패키지 루트:** `com.ktb.community`
+**상세 파일 구조:** IDE 탐색 또는 프로젝트 루트 참조
 
 ---
 
@@ -96,7 +104,7 @@ MySQL Database
 
 ## 5. API 설계
 
-**전체 API 스펙:** `@docs/be/API.md` 참조
+**전체 API 스펙 및 엔드포인트 목록**: **@docs/be/API.md** 참조
 
 ### 공통 응답 구조
 ```json
@@ -107,23 +115,42 @@ MySQL Database
 }
 ```
 
-### 엔드포인트 분류
-- **Auth:** /auth/login, /auth/logout, /auth/refresh_token
-- **Users:** /users/signup, /users/{userID}, /users/{userID}/password
-- **Posts:** /posts (목록, 작성), /posts/{postId} (상세, 수정, 삭제)
-- **Comments:** /posts/{postId}/comments
-- **Likes:** /posts/{postId}/like, /users/me/likes
-
 ---
 
 ## 6. 인증 및 보안
 
 ### 6.1 JWT 토큰
 
-**Access Token:** 30분, API 인증  
-**Refresh Token:** 7일, Access 갱신, `user_tokens` 테이블 저장
+**3가지 토큰 타입:**
 
-**Payload 예시:**
+| 토큰 타입 | 유효기간 | 용도 | DB 저장 | Refresh Token |
+|----------|---------|------|---------|--------------|
+| Access Token (AT) | 15분 | API 인증 | ❌ | ✅ |
+| Refresh Token (RT) | 7일 | AT 갱신 | ✅ user_tokens | ❌ |
+| Guest Token | 5분 | 회원가입 이미지 업로드 | ❌ | ❌ |
+
+**Access Token (AT):**
+- **유효기간**: 15분 (900,000ms)
+- **용도**: API 인증
+- **전달**: Authorization: Bearer {token}
+- **저장**: 클라이언트 JS 메모리
+
+**Refresh Token (RT):**
+- **유효기간**: 7일 (604,800,000ms)
+- **용도**: Access Token 갱신
+- **전달**: httpOnly Cookie (SameSite=Lax, Path=/auth)
+- **저장**: user_tokens 테이블 (RDB)
+
+**Guest Token:**
+- **유효기간**: 5분 (300,000ms)
+- **용도**: 회원가입 시 프로필 이미지 업로드
+- **전달**: Authorization: Bearer {guestToken}
+- **저장**: 없음 (stateless)
+- **특징**: Refresh Token 없음, DB 저장 없음, 일회용
+- **발급**: GET /auth/guest-token
+- **Payload**: subject=guest-{UUID}, role=GUEST
+
+**Payload 예시 (User Token):**
 ```json
 {
   "sub": "user_id",
@@ -134,32 +161,88 @@ MySQL Database
 }
 ```
 
-### 6.2 인증 흐름 (httpOnly Cookie)
+**Payload 예시 (Guest Token):**
+```json
+{
+  "sub": "guest-550e8400-e29b-41d4-a716-446655440000",
+  "role": "GUEST",
+  "iat": 1234567890,
+  "exp": 1234568190
+}
+```
 
-**로그인 (Cookie 기반):**
+### 6.2 인증 흐름 (JWT + Authorization Header)
+
+**현재 구현:** 순수 Servlet Filter 기반 (`filter/JwtAuthenticationFilter.java`)
+
+**로그인:**
 1. Client → POST /auth/login (credentials: 'include')
 2. 서버 → BCrypt 검증
 3. 서버 → Access + Refresh 토큰 생성
-4. 서버 → httpOnly Cookie 발급 (access_token, refresh_token)
+4. 서버 → httpOnly Cookie 발급 (refresh_token만), Access Token은 응답 body
 5. 서버 → Refresh를 user_tokens 테이블에 저장
-6. 클라이언트 → Cookie 자동 저장 (JavaScript 접근 불가)
+6. 클라이언트 → AT는 JS 메모리 저장, RT는 Cookie 자동 저장
 
-**API 호출 (Cookie 자동 전송):**
-1. Client → API 요청 (credentials: 'include')
-2. 브라우저 → Cookie 자동 포함 (access_token)
-3. JwtAuthenticationFilter → Cookie에서 토큰 추출
-4. JwtAuthenticationFilter → 토큰 검증 및 SecurityContext 저장
-5. 비즈니스 로직 실행
+**API 호출 (Authorization Header):**
+1. Client → API 요청 (`Authorization: Bearer {access_token}`)
+2. JwtAuthenticationFilter (순수 Servlet Filter, @Order(1))
+   - Authorization header에서 토큰 추출
+   - JWT 검증 (JwtTokenProvider)
+   - userId 추출 및 Request Attribute 저장 (`req.setAttribute("userId", userId)`)
+3. Controller → HttpServletRequest에서 userId 추출
+4. 비즈니스 로직 실행
 
-**토큰 갱신 (Cookie 기반):**
+**토큰 갱신:**
 1. Client → POST /auth/refresh_token (credentials: 'include')
 2. 서버 → Cookie에서 refresh_token 추출
 3. 서버 → user_tokens 테이블 검증
-4. 서버 → 새 access_token 발급 → httpOnly Cookie 업데이트
+4. 서버 → 새 access_token 발급 → 응답 body (RT 재사용)
 
-**하위 호환성:**
-- Authorization header (Bearer token) 지원 유지
-- Cookie 우선, header는 fallback
+**필터 구현 예시:**
+```java
+@Component
+@Order(1)
+public class JwtAuthenticationFilter implements Filter {
+
+    @Override
+    public void doFilter(ServletRequest request, ServletResponse response,
+                         FilterChain chain) {
+        // 1. Authorization header에서 토큰 추출
+        String bearerToken = req.getHeader("Authorization");
+        String jwt = bearerToken.substring(7); // "Bearer " 제거
+
+        // 2. JWT 검증
+        if (!jwtTokenProvider.validateToken(jwt)) {
+            sendUnauthorized(res, "Invalid token");
+            return;
+        }
+
+        // 3. userId 추출 및 Request Attribute 저장
+        Long userId = jwtTokenProvider.getUserIdFromToken(jwt);
+        req.setAttribute("userId", userId);
+
+        chain.doFilter(request, response);
+    }
+}
+```
+
+**Controller 통합:**
+```java
+@PostMapping
+public ResponseEntity<ApiResponse<PostResponse>> createPost(
+        @RequestBody PostCreateRequest request,
+        HttpServletRequest httpRequest) {
+
+    Long userId = (Long) httpRequest.getAttribute("userId");
+    PostResponse post = postService.createPost(request, userId);
+    return ResponseEntity.ok(ApiResponse.success("create_post_success", post));
+}
+```
+
+**공개 엔드포인트 처리:**
+- GET /posts, GET /users/{id}: 선택적 인증 (JWT 있으면 검증, 없으면 통과)
+- POST /posts, PATCH /users/{id}: 필수 인증 (JWT 없으면 401)
+- OPTIONS 요청: 통과 (CORS Preflight)
 
 ### 6.3 핵심 보안 설정 (CORS + CSRF)
 
@@ -185,21 +268,55 @@ public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
             .csrf(csrf -> csrf
                     .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
-                    .ignoringRequestMatchers("/auth/login", "/users/signup")
+                    .ignoringRequestMatchers(
+                            "/auth/**",           // 인증 관련
+                            "/users/**",          // 사용자 관련 (회원가입, 프로필 수정 등)
+                            "/posts/**",          // 게시글 관련 모든 API
+                            "/images/**"          // 이미지 업로드
+                    )
             )
             .sessionManagement(session ->
                     session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
-                    // 공개 엔드포인트
-                    .requestMatchers(
-                            "/auth/login",
-                            "/auth/refresh_token",
-                            "/users/signup",
-                            "/posts",
-                            "/posts/*",
-                            "/posts/*/comments"
+                    // ========== 순서 중요: 구체적인 패턴 먼저! ==========
+
+                    // 1. 특수 케이스 - GET이지만 인증 필요
+                    .requestMatchers(HttpMethod.GET, "/posts/users/me/likes").authenticated()
+                    
+                    // 2. Public GET 엔드포인트
+                    .requestMatchers(HttpMethod.GET, 
+                            "/posts",                // 게시글 목록
+                            "/posts/*",              // 게시글 상세
+                            "/posts/*/comments",     // 댓글 목록
+                            "/users/*"               // 사용자 프로필 (공개)
                     ).permitAll()
-                    // 나머지는 인증 필요
+                    
+                    // 3. 인증 필요 - Posts
+                    .requestMatchers(HttpMethod.POST, "/posts").authenticated()
+                    .requestMatchers(HttpMethod.PATCH, "/posts/*").authenticated()
+                    .requestMatchers(HttpMethod.DELETE, "/posts/*").authenticated()
+                    .requestMatchers(HttpMethod.POST, "/posts/*/like").authenticated()
+                    .requestMatchers(HttpMethod.DELETE, "/posts/*/like").authenticated()
+                    
+                    // 4. 인증 필요 - Comments
+                    .requestMatchers(HttpMethod.POST, "/posts/*/comments").authenticated()
+                    .requestMatchers(HttpMethod.PATCH, "/posts/*/comments/*").authenticated()
+                    .requestMatchers(HttpMethod.DELETE, "/posts/*/comments/*").authenticated()
+                    
+                    // 5. 인증 필요 - Users
+                    .requestMatchers(HttpMethod.PATCH, "/users/*").authenticated()
+                    .requestMatchers(HttpMethod.PATCH, "/users/*/password").authenticated()
+                    
+                    // 6. 인증 필요 - Images
+                    .requestMatchers(HttpMethod.POST, "/images").authenticated()
+                    
+                    // 7. Public - Auth
+                    .requestMatchers("/auth/login", "/auth/refresh_token", "/users/signup").permitAll()
+
+                    // 8. Public - Legal & Static Resources
+                    .requestMatchers("/terms", "/privacy", "/css/**").permitAll()
+
+                    // 9. 나머지는 인증 필요
                     .anyRequest().authenticated()
             )
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
@@ -210,7 +327,9 @@ public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
 
 **보안 강화 요소:**
 - **CORS**: Express.js 연동 (allowCredentials: true)
-- **CSRF**: Cookie 기반 토큰 (httpOnly=false for JavaScript access)
+- **CSRF**: Cookie 기반 토큰, API 엔드포인트는 제외 (/auth/**, /users/**, /posts/**, /images/**)
+  - 제외 이유: JWT httpOnly Cookie 기반 인증이 CSRF 보호 제공
+  - Cross-origin 환경 (localhost:3000 → localhost:8080)에서 CSRF 토큰 접근 불가 해결
 - **Cookie**: httpOnly (XSS 방어), SameSite=Strict (CSRF 방어)
 
 **권한 제어:**
@@ -319,47 +438,12 @@ public class RateLimitAspect {
 
 ### 7.1 게시글 작성 흐름
 
-**핵심 구현 패턴:**
-```java
-@Transactional
-public PostResponse createPost(PostCreateRequest request, Long userId) {
-    // 1. 사용자 검증 (ACTIVE 필터링 - Soft Delete 정책)
-    User user = userRepository.findByUserIdAndUserStatus(userId, UserStatus.ACTIVE)
-            .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND,
-                    "User not found or inactive with id: " + userId));
-
-    // 2. 게시글 생성 및 저장
-    Post post = request.toEntity(user);
-    Post savedPost = postRepository.save(post);
-
-    // 3. 통계 초기화 (Builder 기본값 0 사용)
-    PostStats stats = PostStats.builder()
-            .post(savedPost)
-            .build();
-    PostStats savedStats = postStatsRepository.save(stats);
-    
-    // 4. Post에 stats 연결 (필수 - PostResponse null 방지)
-    savedPost.updateStats(savedStats);
-
-    // 5. 이미지 TTL 해제 (imageId 있을 경우)
-    if (request.getImageId() != null) {
-        Image image = imageRepository.findById(request.getImageId())
-                .orElseThrow(() -> new BusinessException(ErrorCode.IMAGE_NOT_FOUND,
-                        "Image not found with id: " + request.getImageId()));
-        
-        image.clearExpiresAt();  // expires_at → NULL (영구 보존)
-        
-        PostImage postImage = PostImage.builder()
-                .post(savedPost)
-                .image(image)
-                .displayOrder(1)
-                .build();
-        postImageRepository.save(postImage);
-    }
-
-    return PostResponse.from(savedPost);
-}
-```
+**핵심 단계:**
+1. 사용자 검증 (ACTIVE 필터링 - Soft Delete 정책)
+2. 게시글 생성 및 저장 (DTO → Entity 변환)
+3. 통계 초기화 (PostStats, Builder 기본값 0)
+4. 양방향 연관관계 동기화 (savedPost.updateStats)
+5. 이미지 TTL 해제 (imageId 있을 경우, clearExpiresAt)
 
 **설계 결정사항:**
 - **예외**: BusinessException + ErrorCode 사용 (ResourceNotFoundException 아님)
@@ -367,28 +451,9 @@ public PostResponse createPost(PostCreateRequest request, Long userId) {
 - **updateStats() 필수**: 양방향 연관관계 동기화, PostResponse null 방지
 - **이미지 TTL**: clearExpiresAt() 호출로 영구 보존 전환
 
-**참조:** PostService.java:49-105
+**구현:** PostService.createPost() (Line 49-105)
 
-### 7.2 좋아요 처리 - 동시성 제어
-
-**문제:** 동시 좋아요 시 Race Condition  
-**해결:** DB 레벨 원자적 UPDATE
-
-```java
-@Modifying(clearAutomatically = true)
-@Query("UPDATE PostStats ps SET ps.likeCount = ps.likeCount + 1, " +
-       "ps.lastUpdated = CURRENT_TIMESTAMP WHERE ps.postId = :postId")
-int incrementLikeCount(@Param("postId") Long postId);
-```
-
-**적용:**
-- `incrementLikeCount()` / `decrementLikeCount()`
-- `incrementCommentCount()` / `decrementCommentCount()`
-- `incrementViewCount()`
-
-**선택 이유:** 낙관적 락(재시도 폭증), 비관적 락(과도) 대비 최적
-
-### 7.3 페이지네이션
+### 7.2 페이지네이션
 
 **하이브리드 전략 (Phase 5)**: latest(cursor), likes(offset)
 
@@ -450,153 +515,64 @@ Page<Post> postPage = postRepository.findByStatusWithUserAndStats(PostStatus.ACT
 - likes 정렬 cursor 전환 (복합 cursor: likeCount:postId)
 - GET /posts/users/me/likes cursor 전환
 
-### 7.4 댓글 작성 흐름
+### 7.3 댓글 작성 흐름
 
-**핵심 구현 패턴:**
-```java
-@Transactional
-public CommentResponse createComment(Long postId, CommentCreateRequest request, Long userId) {
-    // 1. 게시글 존재 확인 (Fetch Join, ACTIVE만)
-    Post post = postRepository.findByIdWithUserAndStats(postId, PostStatus.ACTIVE)
-            .orElseThrow(() -> new BusinessException(ErrorCode.POST_NOT_FOUND,
-                    "Post not found with id: " + postId));
-
-    // 2. 사용자 확인 (ACTIVE 필터링 - Soft Delete 정책)
-    User user = userRepository.findByUserIdAndUserStatus(userId, UserStatus.ACTIVE)
-            .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND,
-                    "User not found or inactive with id: " + userId));
-
-    // 3. 댓글 생성 및 저장
-    Comment comment = request.toEntity(post, user);
-    Comment savedComment = commentRepository.save(comment);
-
-    // 4. 댓글 수 자동 증가 (동시성 제어 - 원자적 UPDATE)
-    postStatsRepository.incrementCommentCount(postId);
-
-    return CommentResponse.from(savedComment);
-}
-```
+**핵심 단계:**
+1. 게시글 존재 확인 (Fetch Join, ACTIVE만)
+2. 사용자 확인 (ACTIVE 필터링 - Soft Delete 정책)
+3. 댓글 생성 및 저장
+4. 댓글 수 자동 증가 (동시성 제어 - 원자적 UPDATE)
 
 **설계 결정사항:**
 - **Repository 메서드**: findByIdWithUserAndStats (Fetch Join + ACTIVE 필터링)
 - **동시성 제어**: incrementCommentCount() - DB 레벨 원자적 UPDATE (Section 12.3)
 - **트랜잭션 경계**: 댓글 저장 + 통계 증가가 동일 트랜잭션 (원자성 보장)
+- **권한 검증**: 작성자 본인만 수정/삭제 가능 (userId 비교)
 
-**권한 검증 패턴 (수정/삭제):**
-```java
-// 작성자 본인만 수정 가능
-if (!comment.getUser().getUserId().equals(userId)) {
-    throw new BusinessException(ErrorCode.UNAUTHORIZED_ACCESS,
-            "Not authorized to update this comment");
-}
-```
-
-**참조**: CommentService.java (전체 CRUD), **@docs/be/API.md Section 5**, **@docs/be/DDL.md** (comments 테이블)
+**구현**: CommentService.createComment() (Line 48-75)
+**참조**: **@docs/be/API.md Section 5**, **@docs/be/DDL.md** (comments 테이블)
 
 ---
 
-### 7.5 이미지 업로드 전략
+### 7.4 이미지 업로드 전략
 
-**2가지 패턴 비교:**
+**3가지 패턴 비교:**
 
-| 항목 | Multipart 직접 업로드 | 2단계 업로드 |
-|------|---------------------|-------------|
-| **사용처** | 회원가입, 프로필 수정 | 게시글 작성/수정 |
-| **요청 횟수** | 1회 (multipart/form-data) | 2회 (POST /images → POST /posts) |
-| **트랜잭션** | 원자적 (이미지 포함) | 독립적 (이미지 선행) |
-| **UX 장점** | 간편함, 한 번에 완료 | 미리보기, 임시 저장 지원 |
-| **핵심 메서드** | AuthService.signup() | PostService.createPost() |
+| 항목 | Multipart 직접 업로드 | 2단계 업로드 | 이미지 제거 |
+|------|---------------------|-------------|-----------|
+| **사용처** | 회원가입, 프로필 수정 | 게시글 작성/수정 | 프로필 수정 |
+| **요청 횟수** | 1회 (multipart/form-data) | 2회 (POST /images → POST /posts) | 1회 (removeImage: true) |
+| **트랜잭션** | 원자적 (이미지 포함) | 독립적 (이미지 선행) | 원자적 (TTL 복원) |
+| **UX 장점** | 간편함, 한 번에 완료 | 미리보기, 임시 저장 지원 | 명시적 제거 의도 |
+| **핵심 메서드** | AuthService.signup() | PostService.createPost() | UserService.updateProfile() |
 
-**핵심 구현 패턴:**
-
-**패턴 1 - Multipart 직접 업로드 (AuthService):**
-```java
-@Transactional
-public AuthResponse signup(SignupRequest request, MultipartFile profileImage) {
-    // 1. 이메일 중복 확인
-    if (userRepository.existsByEmail(request.getEmail().toLowerCase().trim())) {
-        throw new BusinessException(ErrorCode.EMAIL_ALREADY_EXISTS, 
-                "Email already exists: " + request.getEmail());
-    }
-    
-    // 2. 닉네임 중복 확인
-    if (userRepository.existsByNickname(request.getNickname())) {
-        throw new BusinessException(ErrorCode.NICKNAME_ALREADY_EXISTS, 
-                "Nickname already exists: " + request.getNickname());
-    }
-    
-    // 3. 비밀번호 정책 검증
-    if (!PasswordValidator.isValid(request.getPassword())) {
-        throw new BusinessException(ErrorCode.INVALID_PASSWORD_POLICY, 
-                PasswordValidator.getPolicyDescription());
-    }
-    
-    // 4. 비밀번호 암호화
-    String encodedPassword = passwordEncoder.encode(request.getPassword());
-    
-    // 5. 프로필 이미지 업로드 (있을 경우)
-    Image image = null;
-    if (profileImage != null && !profileImage.isEmpty()) {
-        ImageResponse imageResponse = imageService.uploadImage(profileImage);
-        image = imageRepository.findById(imageResponse.getImageId())
-                .orElseThrow(() -> new BusinessException(ErrorCode.IMAGE_NOT_FOUND));
-        image.clearExpiresAt();  // TTL 해제 (영구 보존)
-    }
-    
-    // 6. User 생성 (DTO 변환 사용)
-    User user = request.toEntity(encodedPassword);
-    if (image != null) {
-        user.updateProfileImage(image);
-    }
-    userRepository.save(user);
-    
-    // 7. 자동 로그인 - 토큰 발급
-    return generateTokens(user);
-}
-```
-
-**패턴 2 - 2단계 업로드 (PostService):**
-```java
-@Transactional
-public PostResponse createPost(PostCreateRequest request, Long userId) {
-    // ... 게시글 생성 및 저장 ...
-    
-    // 이미지 연결 (imageId가 있을 경우)
-    if (request.getImageId() != null) {
-        Image image = imageRepository.findById(request.getImageId())
-                .orElseThrow(() -> new BusinessException(ErrorCode.IMAGE_NOT_FOUND,
-                        "Image not found with id: " + request.getImageId()));
-        
-        image.clearExpiresAt();  // TTL 해제 (영구 보존)
-        
-        PostImage postImage = PostImage.builder()
-                .post(savedPost)
-                .image(image)
-                .displayOrder(1)
-                .build();
-        postImageRepository.save(postImage);
-    }
-    
-    return PostResponse.from(savedPost);
-}
-```
+**구현 위치:**
+- Pattern 1: AuthService.signup() (Line 61-105)
+- Pattern 2: PostService.createPost() (Line 49-105)
+- Pattern 3: UserService.updateProfile() (Line 88-170)
 
 **TTL 패턴 (공통 핵심):**
 - **업로드 시**: ImageService가 `expires_at = NOW() + 1시간` 설정
 - **사용 시**: `image.clearExpiresAt()` 호출 → `expires_at = NULL` (영구 보존)
+- **제거 시**: `image.setExpiresAt(NOW() + 1시간)` 호출 → TTL 복원 (고아 처리)
 - **미사용 시**: Phase 4 배치가 expires_at < NOW() 조건으로 S3 + DB 삭제
 - **인덱스**: `idx_images_expires` 활용으로 빠른 조회
 
 **설계 결정사항:**
 - **검증 로직**: AuthService.signup()에서 이메일/닉네임/비밀번호 검증 모두 구현됨 (생략 아님)
 - **User 생성**: Builder 직접 사용 대신 `request.toEntity()` + `updateProfileImage()` 패턴
-- **트랜잭션 안전성**: 패턴 1은 완전 원자적, 패턴 2는 이미지만 선행 업로드 (S3 파일 고아 가능)
+- **TTL 복원 전략**: 
+  - 패턴 1 (새 이미지 교체): 기존 이미지 TTL 1시간 복원 → 고아 처리
+  - 패턴 3 (이미지 제거): 기존 이미지 TTL 1시간 복원 → 관계 해제
+  - Phase 4 배치가 expires_at < NOW() 조건으로 S3 + DB 삭제
+- **트랜잭션 안전성**: 패턴 1/3은 완전 원자적, 패턴 2는 이미지만 선행 업로드 (S3 파일 고아 가능)
 
 **참조**: 
 - AuthService.signup() - 패턴 1 전체 구현
 - PostService.createPost() - 패턴 2 전체 구현
+- UserService.updateProfile() - 패턴 3 전체 구현
 - ImageService.uploadImage() - 공통 검증 로직
-- **@docs/be/API.md Section 2.1, 3.3, 4.1**
+- **@docs/be/API.md Section 2.1, 2.3, 3.3, 4.1**
 - **@docs/be/DDL.md** (images 테이블)
 
 ---
@@ -612,7 +588,7 @@ public PostResponse createPost(PostCreateRequest request, Long userId) {
 
 **ErrorCode 형식:** `{DOMAIN}-{NUMBER}` (예: USER-001, POST-001, AUTH-001)
 
-**참조**: `src/main/java/com/ktb/community/enums/ErrorCode.java` (28개 에러 정의)
+**전체 에러 코드 목록**: **@docs/be/API.md Section 7** (도메인별 28개 에러 코드)
 
 ---
 
@@ -702,7 +678,7 @@ public Post toEntity(User user) {
 | **HikariCP** | Spring Boot default | DB 커넥션 풀 (default: 10) |
 | **Multipart** | max-file-size: 5MB, max-request-size: 10MB | 이미지 업로드 제한 |
 | **JPA** | ddl-auto: validate, open-in-view: false, default_batch_fetch_size: 100 | 운영 모드, OSIV 비활성화, N+1 최적화 |
-| **JWT** | access: 30분 (1800000ms), refresh: 7일 (604800000ms) | 토큰 유효기간 |
+| **JWT** | access: 15분 (900000ms), refresh: 7일 (604800000ms) | 토큰 유효기간 |
 | **S3** | bucket/region 환경 변수 주입 | DefaultCredentialsProvider 체인 |
 | **Rate Limit** | 코드 기반 (@RateLimit 어노테이션) | 엔드포인트별 개별 설정 |
 | **Logging** | root: INFO, com.ktb.community: DEBUG | 개발 환경 로깅 레벨 |
@@ -760,43 +736,21 @@ class PostRepositoryTest {
 ### 12.1 데이터베이스 최적화
 
 **N+1 문제 해결:**
-```java
-@Query("SELECT p FROM Post p " +
-       "JOIN FETCH p.user " +
-       "LEFT JOIN FETCH p.stats " +
-       "WHERE p.status = :status")
-Page<Post> findByStatusWithUserAndStats(...);
-```
-
-**인덱스 활용:**
-- DDL.md의 인덱스 정의 준수
-- EXPLAIN으로 쿼리 실행 계획 분석
+- JOIN FETCH 사용 (Post + User + PostStats 동시 로드)
+- Repository 커스텀 쿼리: `findByStatusWithUserAndStats()`
+- 인덱스 활용: DDL.md 정의 준수, EXPLAIN 분석
 
 **Batch Fetch Size 설정:**
-```yaml
-spring:
-  jpa:
-    properties:
-      hibernate:
-        default_batch_fetch_size: 100  # N+1 최적화
-```
+- `default_batch_fetch_size: 100` (application.yaml)
 - to-many lazy loading 시 IN 쿼리로 일괄 로드
-- Post 목록 조회: 11개 쿼리 → 2개 쿼리 (82% 감소)
+- **효과**: Post 목록 조회 11개 쿼리 → 2개 쿼리 (82% 감소)
 - 코드 변경 없이 설정만으로 적용 가능
 
 **User Soft Delete 필터링:**
-```java
-// Repository: Spring Data 파생 메서드
-Optional<User> findByUserIdAndUserStatus(Long userId, UserStatus userStatus);
-
-// Service: ACTIVE 필터 적용
-User user = userRepository.findByUserIdAndUserStatus(userId, UserStatus.ACTIVE)
-    .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND,
-        "User not found or inactive with id: " + userId));
-```
-- INACTIVE/DELETED 사용자는 게시글 작성/댓글 작성/좋아요 불가
-- 보안 취약점 제거: 탈퇴 사용자의 활동 차단
-- 적용 범위: UserService 4곳, PostService/CommentService/LikeService 각 1곳
+- Repository: `findByUserIdAndUserStatus(userId, UserStatus.ACTIVE)`
+- INACTIVE/DELETED 사용자의 활동 차단 (게시글/댓글/좋아요)
+- 보안 취약점 제거: 탈퇴 사용자 차단
+- **적용**: UserService 4곳, PostService/CommentService/LikeService 각 1곳
 
 ### 12.2 캐싱 전략 (추후)
 
@@ -821,12 +775,12 @@ WHERE post_id = ?;
 
 **Repository 구현:**
 ```java
-@Modifying(clearAutomatically = true)
+@Modifying(clearAutomatically = false)
 @Query("UPDATE PostStats ps SET ps.likeCount = ps.likeCount + 1, " +
        "ps.lastUpdated = CURRENT_TIMESTAMP WHERE ps.postId = :postId")
 int incrementLikeCount(@Param("postId") Long postId);
 
-@Modifying(clearAutomatically = true)
+@Modifying(clearAutomatically = false)
 @Query("UPDATE PostStats ps SET ps.likeCount = ps.likeCount - 1, " +
        "ps.lastUpdated = CURRENT_TIMESTAMP " +
        "WHERE ps.postId = :postId AND ps.likeCount > 0")
@@ -835,13 +789,21 @@ int decrementLikeCount(@Param("postId") Long postId);
 
 **적용 대상:**
 - `likeCount`: 좋아요 증감
-- `commentCount`: 댓글 수 증감  
+- `commentCount`: 댓글 수 증감
 - `viewCount`: 조회수 증가 (가장 빈번)
 
 **대안 검토:**
 - ❌ 낙관적 락 (@Version): 재시도 폭증
 - ❌ 비관적 락 (FOR UPDATE): 과도한 오버헤드
 - ✅ 원자적 UPDATE: 성능과 일관성 최적
+
+**Phase 5 최적화 (clearAutomatically = false):**
+- **문제**: PostStats 조회 후 JPQL UPDATE 실행 시 영속성 컨텍스트의 stale 데이터 유지
+- **기존 방식**: clearAutomatically = true → 1차 캐시 자동 초기화, 이후 조회 시 DB 재조회 필요
+- **최적화**: clearAutomatically = false → 1차 캐시 유지, Optimistic Update 패턴으로 클라이언트가 보정
+- **결과**: DB 통신 17% 감소, detached entity 이슈 해결, 동시성 보장 유지
+- **Trade-off**: 서버 응답값은 stale (증가 전 값), 클라이언트가 UI에서 +1/-1 처리
+- **참조**: PLAN.md Phase 5 (Line 295-306), API.md Section 3.2/6.1/6.2
 
 ---
 
@@ -909,3 +871,8 @@ int decrementLikeCount(@Param("postId") Long postId);
 | 2025-10-10 | 1.4 | HTML 이스케이프 코드 수정 (Section 6.5) |
 | 2025-10-15 | 1.5 | Section 14 로깅 정책 추가, Service Layer 로그 레벨 조정 |
 | 2025-10-15 | 1.6 | Section 12.1 User Soft Delete 필터링 및 Batch Fetch Size 추가 |
+| 2025-10-21 | 1.7 | Section 6.3 SecurityConfig CSRF 설정 업데이트 (API 엔드포인트 제외 반영) |
+| 2025-10-22 | 1.8 | 중복 제거 및 참조 최적화 (Section 5 API 엔드포인트, Section 8.1 에러 코드 - API.md 참조) |
+| 2025-10-22 | 1.9 | Section 7.2, 12.3 clearAutomatically 파라미터 동기화 (true → false, Phase 5 최적화 반영) |
+| 2025-11-03 | 2.0 | Section 7.5 Pattern 3 추가 (이미지 제거, UserService.updateProfile), TTL 복원 전략 문서화 |
+| 2025-11-12 | 2.1 | 문서 최적화 - 코드 블록 제거 및 참조 기반 재구조화 (Section 3, 7.1, 7.3, 7.4, 12.1 압축, Section 7.2 삭제, 2,300 tokens 절감) |
