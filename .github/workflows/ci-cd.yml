@@ -52,42 +52,46 @@ jobs:
           echo "이미지: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.TAG }}"
 
       # CD: SSH로 EC2 배포
+      - name: Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
+
       - name: Deploy to EC2
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ubuntu
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            set -e
+        run: |
+          ssh -i ~/.ssh/id_ed25519 ubuntu@${{ secrets.SSH_HOST }} << 'ENDSSH'
+          set -e
 
-            # 1. 필수 프로그램 확인
-            echo "=== 필수 프로그램 확인 ==="
-            command -v docker >/dev/null 2>&1 || { echo "Docker 미설치"; exit 1; }
-            command -v docker-compose >/dev/null 2>&1 || command -v "docker compose" >/dev/null 2>&1 || { echo "Docker Compose 미설치"; exit 1; }
-            echo "모든 필수 프로그램 확인 완료"
+          # 1. 필수 프로그램 확인
+          echo "=== 필수 프로그램 확인 ==="
+          command -v docker >/dev/null 2>&1 || { echo "Docker 미설치"; exit 1; }
+          command -v docker-compose >/dev/null 2>&1 || command -v "docker compose" >/dev/null 2>&1 || { echo "Docker Compose 미설치"; exit 1; }
+          echo "모든 필수 프로그램 확인 완료"
 
-            # 2. 작업 디렉토리 이동
-            cd /home/ubuntu/app
+          # 2. 작업 디렉토리 이동
+          cd /home/ubuntu/app
 
-            # 3. 환경변수 설정
-            echo "=== 환경변수 설정 ==="
-            ./scripts/setup-env.sh ${{ secrets.REGISTRY_URL }} community-fe ${{ steps.tag.outputs.TAG }}
+          # 3. 환경변수 설정
+          echo "=== 환경변수 설정 ==="
+          ./scripts/setup-env.sh ${{ secrets.REGISTRY_URL }} community-fe ${{ steps.tag.outputs.TAG }}
 
-            # 4. 이미지 풀 & 실행
-            echo "=== 컨테이너 배포 ==="
-            docker-compose pull
-            docker-compose --env-file .env up -d
+          # 4. 이미지 풀 & 실행
+          echo "=== 컨테이너 배포 ==="
+          docker-compose pull
+          docker-compose --env-file .env up -d
 
-            # 5. 헬스체크
-            echo "=== 헬스체크 (최대 30초) ==="
-            for i in {1..30}; do
-              if curl -sf http://localhost:3000 >/dev/null 2>&1; then
-                echo "헬스체크 성공 (${i}초)"
-                exit 0
-              fi
-              sleep 1
-            done
-            echo "헬스체크 실패"
-            docker-compose logs --tail 30
-            exit 1
+          # 5. 헬스체크
+          echo "=== 헬스체크 (최대 30초) ==="
+          for i in {1..30}; do
+            if curl -sf http://localhost:3000 >/dev/null 2>&1; then
+              echo "헬스체크 성공 (${i}초)"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "헬스체크 실패"
+          docker-compose logs --tail 30
+          exit 1
+          ENDSSH
