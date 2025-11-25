@@ -52,11 +52,44 @@
     };
 
     /**
+     * Guest Token 발급 (회원가입 페이지 로드 시)
+     * 용도: 프로필 이미지 업로드를 위한 임시 인증
+     */
+    async function fetchGuestToken() {
+        try {
+            const API_BASE_URL = window.APP_CONFIG?.API_BASE_URL || '';
+            const response = await fetch(`${API_BASE_URL}/auth/guest-token`, {
+                method: 'GET',
+                credentials: 'include'
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                const guestToken = data.data;  // Guest Token 문자열
+
+                // sessionStorage에 저장 (페이지 새로고침 시에도 유지)
+                sessionStorage.setItem('guestToken', guestToken);
+                console.log('✅ Guest Token issued for signup');
+                return guestToken;
+            } else {
+                console.error('Failed to fetch guest token:', response.status);
+                return null;
+            }
+        } catch (error) {
+            console.error('Guest token fetch error:', error);
+            return null;
+        }
+    }
+
+    /**
      * 초기화
      */
-    function init() {
+    async function init() {
         cacheElements();
         bindEvents();
+
+        // 페이지 로드 시 Guest Token 발급
+        await fetchGuestToken();
     }
 
     /**
@@ -144,7 +177,8 @@
 
     /**
      * 폼 제출 핸들러
-     * POST /users/signup (multipart/form-data)
+     * POST /users/signup (application/json)
+     * - 2단계 업로드: 프로필 이미지 → imageId 획득 → JSON 방식 회원가입
      */
     async function handleSubmit(event) {
         event.preventDefault();
@@ -164,27 +198,35 @@
         const nickname = sanitizeInput(elements.nicknameInput.value);
         const profileImage = elements.profileImageInput.files[0];
 
-        // FormData 구성
-        const formData = new FormData();
-        formData.append('email', email);
-        formData.append('password', password);
-        formData.append('nickname', nickname);
-
-        if (profileImage) {
-            formData.append('profileImage', profileImage);  // camelCase로 통일
-        }
-
         try {
             state.isSubmitting = true;
             setLoading(true);
 
-            // API 호출 (multipart/form-data이므로 fetch 직접 사용)
+            // 1단계: 프로필 이미지 업로드 (선택)
+            let imageId = null;
+            if (profileImage) {
+                try {
+                    const imageResult = await uploadImage(profileImage);
+                    imageId = imageResult.imageId;
+                } catch (error) {
+                    console.error('Image upload failed:', error);
+                    const translatedMessage = translateErrorCode(error.message);
+                    showError('profileImage', translatedMessage || '이미지 업로드에 실패했습니다.');
+                    state.isSubmitting = false;
+                    setLoading(false);
+                    return;
+                }
+            }
+
+            // 2단계: 회원가입 (JSON)
             let response;
             try {
-                response = await fetch(`${window.API_BASE_URL}/users/signup`, {
+                const API_BASE_URL = window.APP_CONFIG?.API_BASE_URL || '';
+                response = await fetch(`${API_BASE_URL}/users/signup`, {
                     method: 'POST',
                     credentials: 'include',  // HttpOnly Cookie 수신
-                    body: formData // Content-Type 자동 설정
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password, nickname, imageId })
                 });
             } catch (error) {
                 // Network Error 감지 (TypeError "Failed to fetch")
@@ -203,6 +245,9 @@
                 if (data.data && data.data.accessToken) {
                     setAccessToken(data.data.accessToken);
                 }
+
+                // Guest Token 정리 (더 이상 필요 없음)
+                sessionStorage.removeItem('guestToken');
 
                 // 회원가입 성공 - 자동 로그인되어 게시글 목록으로 이동
                 Toast.success('회원가입이 완료되었습니다.', '환영합니다', 2000, () => {
@@ -423,22 +468,32 @@
      * @param {string} field - 'password' | 'passwordConfirm'
      */
     function togglePasswordVisibility(field) {
-        const inputElement = field === 'password' ? elements.passwordInput : elements.passwordConfirmInput;
-        const toggleButton = field === 'password' ? elements.passwordToggle : elements.passwordConfirmToggle;
+        // 두 입력 필드와 버튼을 모두 처리
+        const inputs = [elements.passwordInput, elements.passwordConfirmInput];
+        const buttons = [elements.passwordToggle, elements.passwordConfirmToggle];
 
-        if (!inputElement || !toggleButton) return;
+        // 현재 상태 확인 (첫 번째 필드 기준)
+        if (!elements.passwordInput) return;
+        const isPasswordVisible = elements.passwordInput.type === 'text';
 
-        // type 토글
-        if (inputElement.type === 'password') {
-            inputElement.type = 'text';
-            toggleButton.setAttribute('aria-label', '비밀번호 숨기기');
-            // 아이콘 변경 (CSS로 처리)
-            toggleButton.classList.add('password-toggle--visible');
-        } else {
-            inputElement.type = 'password';
-            toggleButton.setAttribute('aria-label', '비밀번호 표시');
-            toggleButton.classList.remove('password-toggle--visible');
-        }
+        // 두 필드 모두 동시에 토글
+        inputs.forEach(input => {
+            if (input) {
+                input.type = isPasswordVisible ? 'password' : 'text';
+            }
+        });
+
+        buttons.forEach(button => {
+            if (button) {
+                if (isPasswordVisible) {
+                    button.setAttribute('aria-label', '비밀번호 표시');
+                    button.classList.remove('password-toggle--visible');
+                } else {
+                    button.setAttribute('aria-label', '비밀번호 숨기기');
+                    button.classList.add('password-toggle--visible');
+                }
+            }
+        });
     }
 
     /**

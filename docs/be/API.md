@@ -128,13 +128,25 @@ async function refreshAccessToken() {
 ### 2.1 회원가입
 **Endpoint:** `POST /users/signup` or `POST /users`
 
-**Content-Type:** `multipart/form-data`
+**Content-Type:** `application/json`
 
-**Request Parts:**
-- `email` (String, 필수) - 이메일 주소
-- `password` (String, 필수) - 비밀번호 (8-20자, 대/소/특수문자 각 1개+)
-- `nickname` (String, 필수) - 닉네임 (10자 이내)
-- `profileImage` (File, 선택) - 프로필 이미지 (JPG/PNG/GIF, 최대 5MB)
+**Request Body:**
+```json
+{
+  "email": "test@startupcode.kr",
+  "password": "Test1234!",
+  "nickname": "테스트유저",
+  "imageId": 123
+}
+```
+
+**필수:** email(String), password(String), nickname(String)
+**선택:** imageId(Number) - [Lambda 이미지 업로드](#41-lambda-이미지-업로드-step-1-s3) + [메타데이터 등록](#42-메타데이터-등록-step-2-db)으로 먼저 획득
+
+**이미지 업로드 플로우 (2단계):**
+1. Step 1: `POST https://{api-gateway}/images` → imageUrl 획득 (Lambda)
+2. Step 2: `POST /images/metadata` → imageId 획득 (Backend)
+3. Step 3: `POST /users/signup` → 회원가입 (imageId 포함)
 
 **응답:**
 - 201: `register_success` → **AT는 응답 body, RT는 httpOnly Cookie** (자동 로그인)
@@ -142,8 +154,7 @@ async function refreshAccessToken() {
     - Body: `{ userId, email, nickname, profileImage, accessToken }` (AuthResponse)
 - 409: USER-002 (Email exists), USER-003 (Nickname exists)
 - 400: USER-004 (Password policy)
-- 413: IMAGE-002 (File too large)
-- 400: IMAGE-003 (Invalid file type)
+- 404: IMAGE-001 (imageId not found)
 - 400/500: [공통 에러 코드](#응답-코드) 참조
 
 **응답 예시:**
@@ -180,18 +191,30 @@ async function refreshAccessToken() {
 
 **헤더:** Authorization: Bearer {access_token}
 
-**Content-Type:** `multipart/form-data`
+**Content-Type:** `application/json`
 
-**Request Parts:**
-- `nickname` (String, 선택) - 닉네임 (10자 이내)
-- `profileImage` (File, 선택) - 프로필 이미지 (JPG/PNG/GIF, 최대 5MB)
+**Request Body:**
+```json
+{
+  "nickname": "새닉네임",
+  "imageId": 123,
+  "removeImage": false
+}
+```
+
+**선택:** nickname(String), imageId(Number), removeImage(Boolean)
+**참고:** PATCH는 부분 업데이트, 최소 1개 필드 필요
+
+**이미지 처리:**
+- `removeImage: true` - 기존 이미지 제거 (기본 이미지로 변경)
+- `imageId: 123` - 새 이미지로 교체 (2단계 업로드로 먼저 획득)
+- 둘 다 없음 - 이미지 유지
+- **주의:** removeImage와 imageId 동시 전달 시 imageId가 우선 적용됨
 
 **응답:**
 - 200: `update_profile_success` → 수정된 정보 반환
-- 404: USER-001 (User not found)
+- 404: USER-001 (User not found), IMAGE-001 (imageId not found)
 - 409: USER-003 (Nickname exists)
-- 413: IMAGE-002 (File too large)
-- 400: IMAGE-003 (Invalid file type)
 - 401/403/500: [공통 에러 코드](#응답-코드) 참조
 
 ---
@@ -444,7 +467,84 @@ return PostResponse.from(post);
 
 ## 4. 이미지 (Images)
 
-### 4.1 이미지 업로드
+### 4.1 Lambda 이미지 업로드 (Step 1: S3)
+**Endpoint:** `POST https://{api-gateway-url}/images` (API Gateway)
+
+**헤더:**
+- `Authorization: Bearer {access_token}`
+- `Content-Type: image/jpeg | image/png | image/gif`
+- `x-filename: profile.jpg` (원본 파일명)
+
+**Request:** 바이너리 이미지 데이터 (FormData 아님)
+
+**제약:** JPG/PNG/GIF, 최대 5MB
+
+**응답:**
+- 201: `upload_image_success` → imageUrl, fileSize, originalFilename 반환
+- 401: AUTH-002 (Invalid token), AUTH-003 (Token expired)
+- 413: IMAGE-002 (File too large)
+- 400: IMAGE-003 (Invalid file type)
+- 500: COMMON-999 (Lambda internal error)
+
+**응답 예시:**
+```json
+{
+  "message": "upload_image_success",
+  "data": {
+    "imageUrl": "https://ktb-3-community-images-dev.s3.ap-northeast-2.amazonaws.com/users/123/images/1699876543210-uuid.jpeg",
+    "fileSize": 1234567,
+    "originalFilename": "profile.jpg",
+    "uploadedAt": "2025-11-14T10:00:00.000Z"
+  },
+  "timestamp": "2025-11-14T10:00:00.000Z"
+}
+```
+
+---
+
+### 4.2 메타데이터 등록 (Step 2: DB)
+**Endpoint:** `POST /images/metadata`
+
+**헤더:** Authorization: Bearer {access_token}
+
+**Request Body:**
+```json
+{
+  "imageUrl": "https://ktb-3-community-images-dev.s3.ap-northeast-2.amazonaws.com/...",
+  "fileSize": 1234567,
+  "originalFilename": "profile.jpg"
+}
+```
+
+**필수:** imageUrl(String), fileSize(Number), originalFilename(String)
+
+**응답:**
+- 201: `register_image_metadata_success` → imageId 반환
+- 400: IMAGE-004 (Invalid image URL format)
+- 409: COMMON-003 (Resource conflict - imageUrl 중복)
+- 401/500: [공통 에러 코드](#응답-코드) 참조
+
+**응답 예시:**
+```json
+{
+  "message": "register_image_metadata_success",
+  "data": {
+    "imageId": 123,
+    "imageUrl": "https://...",
+    "fileSize": 1234567,
+    "originalFilename": "profile.jpg",
+    "createdAt": "2025-11-14T10:00:00",
+    "expiresAt": "2025-11-14T11:00:00"
+  },
+  "timestamp": "2025-11-14T10:00:00"
+}
+```
+
+**참고:** expiresAt은 1시간 후, 게시글/프로필에 연결되면 NULL로 변경 (영구화)
+
+---
+
+### 4.3 Multipart 이미지 업로드 (레거시)
 **Endpoint:** `POST /images`
 
 **헤더:** Authorization: Bearer {access_token}, Content-Type: multipart/form-data
@@ -458,6 +558,8 @@ return PostResponse.from(post);
 - 413: IMAGE-002 (File too large)
 - 400: IMAGE-003 (Invalid file type)
 - 401/500: [공통 에러 코드](#응답-코드) 참조
+
+**참고:** 하위 호환성을 위해 유지, 프론트엔드는 Lambda 방식 사용 권장
 
 ---
 

@@ -346,35 +346,54 @@
   /**
    * 비밀번호 표시/숨김 토글
    * @param {string} field - 'currentPassword' | 'newPassword' | 'newPasswordConfirm'
+   *
+   * 새 비밀번호와 새 비밀번호 확인은 동시에 토글됨 (UX 개선)
+   * 현재 비밀번호는 독립적으로 토글됨
    */
   function togglePasswordVisibility(field) {
-    const inputMap = {
-      currentPassword: elements.currentPasswordInput,
-      newPassword: elements.newPasswordInput,
-      newPasswordConfirm: elements.newPasswordConfirmInput
-    };
+    // 현재 비밀번호는 독립적으로 처리
+    if (field === 'currentPassword') {
+      const inputElement = elements.currentPasswordInput;
+      const toggleButton = elements.currentPasswordToggle;
 
-    const toggleMap = {
-      currentPassword: elements.currentPasswordToggle,
-      newPassword: elements.newPasswordToggle,
-      newPasswordConfirm: elements.newPasswordConfirmToggle
-    };
+      if (!inputElement || !toggleButton) return;
 
-    const inputElement = inputMap[field];
-    const toggleButton = toggleMap[field];
-
-    if (!inputElement || !toggleButton) return;
-
-    // type 토글
-    if (inputElement.type === 'password') {
-      inputElement.type = 'text';
-      toggleButton.setAttribute('aria-label', '비밀번호 숨기기');
-      toggleButton.classList.add('password-toggle--visible');
-    } else {
-      inputElement.type = 'password';
-      toggleButton.setAttribute('aria-label', '비밀번호 표시');
-      toggleButton.classList.remove('password-toggle--visible');
+      if (inputElement.type === 'password') {
+        inputElement.type = 'text';
+        toggleButton.setAttribute('aria-label', '비밀번호 숨기기');
+        toggleButton.classList.add('password-toggle--visible');
+      } else {
+        inputElement.type = 'password';
+        toggleButton.setAttribute('aria-label', '비밀번호 표시');
+        toggleButton.classList.remove('password-toggle--visible');
+      }
+      return;
     }
+
+    // 새 비밀번호와 새 비밀번호 확인은 동시에 토글
+    const inputs = [elements.newPasswordInput, elements.newPasswordConfirmInput];
+    const buttons = [elements.newPasswordToggle, elements.newPasswordConfirmToggle];
+
+    if (!elements.newPasswordInput) return;
+    const isPasswordVisible = elements.newPasswordInput.type === 'text';
+
+    inputs.forEach(input => {
+      if (input) {
+        input.type = isPasswordVisible ? 'password' : 'text';
+      }
+    });
+
+    buttons.forEach(button => {
+      if (button) {
+        if (isPasswordVisible) {
+          button.setAttribute('aria-label', '비밀번호 표시');
+          button.classList.remove('password-toggle--visible');
+        } else {
+          button.setAttribute('aria-label', '비밀번호 숨기기');
+          button.classList.add('password-toggle--visible');
+        }
+      }
+    });
   }
 
   if (document.readyState === 'loading') {

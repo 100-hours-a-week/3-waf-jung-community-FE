@@ -201,10 +201,15 @@ testApiConnection();
 
 ---
 
-## Phase 3: JWT HttpOnly Cookie 전환 ✅ 코드 완료 (테스트 대기)
+## Phase 3: JWT HttpOnly Cookie 전환 ⚠️ 부분 완료 (혼합 방식)
 
 ### 목표
 localStorage JWT 토큰을 HttpOnly Cookie로 전환하여 XSS 공격 방어
+
+### 현재 구현 상태
+**혼합 방식 채택**: localStorage AT + HttpOnly Cookie RT
+- Access Token: localStorage 저장 (MPA 호환성, 페이지 이동 시 유지)
+- Refresh Token: HttpOnly Cookie (XSS 방어)
 
 ### Before/After 비교
 
@@ -424,11 +429,11 @@ services:
 |-------|----------|------|--------|
 | Phase 1 | Express.js 정적 파일 서버 구축 | ✅ 완료 | 2025-10-20 |
 | Phase 2 | CORS 설정 및 API 연동 확인 | ⚠️ 코드 완료, 테스트 대기 | 2025-10-20 |
-| Phase 3 | JWT HttpOnly Cookie 전환 | ✅ 코드 완료, 테스트 대기 | 2025-10-21 |
+| Phase 3 | JWT HttpOnly Cookie 전환 | ⚠️ 부분 완료 (혼합 방식) | 2025-10-21 |
 | Phase 4 | 통합 테스트 및 검증 | ⏳ 대기 | - |
 | Phase 5 | 배포 준비 및 최적화 | ⏳ 대기 | - |
 
-**현재 진행률**: Phase 1 완료 (100%), Phase 2 코드 완료 (80%), Phase 3 코드 완료 (90%)
+**현재 진행률**: Phase 1 완료 (100%), Phase 2 코드 완료 (80%), Phase 3 부분 완료 (localStorage AT + Cookie RT 혼합)
 **다음 단계**: Express.js + Spring Boot 서버 실행 → Phase 2-3 통합 수동 테스트 (30-40분) → Phase 4 진입
 
 ---
@@ -442,3 +447,4 @@ services:
 | 2025-10-20 | 2.1 | 코드 예제 간소화 (711줄 → 440줄, 38% 감소) - 핵심 스니펫만 유지 |
 | 2025-10-21 | 2.2 | Phase 3 프론트엔드 작업 완료 (localStorage 제거, credentials 추가) - 진행률 67% |
 | 2025-10-21 | 2.3 | Phase 2 백엔드 CORS 설정 검증 완료 - Phase 2/3 통합 테스트 대기 |
+| 2025-11-25 | 2.4 | Phase 3 상태 수정: 혼합 방식 채택 (localStorage AT + HttpOnly Cookie RT) |

@@ -34,6 +34,9 @@ tmp/
 temp/
 .cache/
 
+# Runtime generated config
+origin_source/static/config.js
+
 # TypeScript
 *.tsbuildinfo
 tsconfig.tsbuildinfo
@@ -69,9 +72,17 @@ docker-data/
 # AI AGENT files
 .claude/
 CLAUDE.md
-AGENTS.md
-.mcp.jsonlogin_sample_images/
-*.png
-test_image/
 .mcp.json
 .amazonq
+
+# Test files
+login_sample_images/
+*.png
+test_image/
+
+# Docker (빌드 컨텍스트에서만 사용)
+Dockerfile
+.dockerignore
+
+# Legacy files
+legacy/

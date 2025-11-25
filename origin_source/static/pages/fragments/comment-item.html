@@ -70,7 +70,7 @@
 
     // Author info
     const avatar = item.querySelector('[data-field="authorImage"]');
-    avatar.src = comment.author.profileImage || '/images/default-avatar.png';
+    avatar.src = comment.author.profileImage || 'https://api.dicebear.com/7.x/avataaars/svg?seed=default';
 
     const authorName = item.querySelector('[data-field="authorName"]');
     authorName.textContent = comment.author.nickname;
@@ -117,7 +117,7 @@
       <div class="comment-item" data-comment-id="${commentId}">
         <div class="comment-item__header">
           <img
-            src="${author.profileImage || '/images/default-avatar.png'}"
+            src="${author.profileImage || 'https://api.dicebear.com/7.x/avataaars/svg?seed=default'}"
             alt="${Utils.escapeHtml(author.nickname)} 프로필"
             class="comment-item__avatar"
           >
