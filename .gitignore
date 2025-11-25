@@ -80,9 +80,5 @@ login_sample_images/
 *.png
 test_image/
 
-# Docker (빌드 컨텍스트에서만 사용)
-Dockerfile
-.dockerignore
-
 # Legacy files
 legacy/
