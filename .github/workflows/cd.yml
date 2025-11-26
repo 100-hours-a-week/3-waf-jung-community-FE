@@ -41,21 +41,45 @@ jobs:
           ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
 
       - name: Deploy to EC2
+        env:
+          IMAGE_TAG: ${{ needs.build.outputs.image_tag }}
         run: |
-          ssh -i ~/.ssh/id_ed25519 ubuntu@${{ secrets.SSH_HOST }} << ENDSSH
+          ssh -i ~/.ssh/id_ed25519 ubuntu@${{ secrets.SSH_HOST }} << 'ENDSSH'
             set -e
-            cd /home/ubuntu/app
+            command -v docker >/dev/null 2>&1 || exit 1
+            docker compose version >/dev/null 2>&1 || exit 1
 
             export REGISTRY=${{ secrets.REGISTRY_URL }}
             export IMAGE_NAME=community-fe
             export IMAGE_TAG=${{ needs.build.outputs.image_tag }}
 
-            docker compose pull
-            docker compose up -d --force-recreate
+            cd /home/ubuntu/app
 
-            i=1; while [ \$i -le 30 ]; do
-              curl -sf http://localhost:3000 >/dev/null 2>&1 && exit 0
-              sleep 1; i=\$((i + 1))
+            # 기존 컨테이너 정리
+            echo "기존 컨테이너 정리 중..."
+            docker compose down --remove-orphans || true
+
+            # 새 이미지 배포
+            echo "새 이미지 배포 중..."
+            docker compose pull
+            docker compose up -d
+
+            echo "헬스체크 중..."
+            HEALTH_OK=false
+            for i in $(seq 1 60); do
+              if curl -sf http://localhost:3000 >/dev/null 2>&1; then
+                echo "헬스체크 성공! (${i}초)"
+                HEALTH_OK=true
+                break
+              fi
+              sleep 1
             done
-            docker compose logs --tail 30; exit 1
+
+            if [ "$HEALTH_OK" = "true" ]; then
+              echo "배포 완료"
+            else
+              echo "헬스체크 실패"
+              docker compose logs --tail 30
+              false
+            fi
           ENDSSH
