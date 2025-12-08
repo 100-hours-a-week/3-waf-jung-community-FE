@@ -58,7 +58,8 @@
     async function fetchGuestToken() {
         try {
             const API_BASE_URL = window.APP_CONFIG?.API_BASE_URL || '';
-            const response = await fetch(`${API_BASE_URL}/auth/guest-token`, {
+            const API_PREFIX = window.APP_CONFIG?.API_PREFIX || '';
+            const response = await fetch(`${API_BASE_URL}${API_PREFIX}/auth/guest-token`, {
                 method: 'GET',
                 credentials: 'include'
             });
@@ -84,12 +85,9 @@
     /**
      * 초기화
      */
-    async function init() {
+    function init() {
         cacheElements();
         bindEvents();
-
-        // 페이지 로드 시 Guest Token 발급
-        await fetchGuestToken();
     }
 
     /**
@@ -153,7 +151,7 @@
     /**
      * 프로필 이미지 변경 핸들러
      */
-    function handleImageChange(event) {
+    async function handleImageChange(event) {
         const file = event.target.files[0];
         if (!file) return;
 
@@ -163,6 +161,12 @@
             showError('profileImage', error);
             event.target.value = '';
             return;
+        }
+
+        // Guest Token이 없으면 발급 (이미지 업로드를 위한 임시 인증)
+        if (!sessionStorage.getItem('guestToken')) {
+            console.log('Guest Token 발급 중... (이미지 업로드용)');
+            await fetchGuestToken();
         }
 
         // 미리보기 표시
@@ -222,7 +226,8 @@
             let response;
             try {
                 const API_BASE_URL = window.APP_CONFIG?.API_BASE_URL || '';
-                response = await fetch(`${API_BASE_URL}/users/signup`, {
+                const API_PREFIX = window.APP_CONFIG?.API_PREFIX || '';
+                response = await fetch(`${API_BASE_URL}${API_PREFIX}/users/signup`, {
                     method: 'POST',
                     credentials: 'include',  // HttpOnly Cookie 수신
                     headers: { 'Content-Type': 'application/json' },

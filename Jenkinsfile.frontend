@@ -1,0 +1,143 @@
+pipeline {
+    agent any
+
+    parameters {
+        string(
+            name: 'IMAGE_DATE_TAG',
+            defaultValue: '',
+            description: 'GA에서 빌드한 날짜 태그 (예: 20251208-153045). 최종 태그는 fe-<이 값>으로 사용'
+        )
+    }
+
+    environment {
+        AWS_REGION      = 'ap-northeast-2'
+        ACCOUNT_ID      = '557690602093'
+        REGISTRY        = "${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+        IMAGE_NAME      = 'ktb-personal'
+
+        // 실제 프론트엔드 Target Group ARN 으로 교체
+        FRONTEND_TG_ARN = 'arn:aws:elasticloadbalancing:ap-northeast-2:557690602093:targetgroup/ktb-personal-project-fe/a15b80c5eb204235'
+    }
+
+    stages {
+        stage('Resolve Frontend Targets') {
+            steps {
+                script {
+                    // 1) 타겟그룹 → 인스턴스 ID
+                    def instanceIds = sh(
+                        script: """
+                          aws elbv2 describe-target-health \\
+                            --region ${AWS_REGION} \\
+                            --target-group-arn ${FRONTEND_TG_ARN} \\
+                            --query 'TargetHealthDescriptions[].Target.Id' \\
+                            --output text
+                        """,
+                        returnStdout: true
+                    ).trim()
+
+                    if (!instanceIds) {
+                        error "프론트엔드 타겟그룹에 등록된 인스턴스가 없습니다."
+                    }
+
+                    // 2) 인스턴스 ID → 프라이빗 IP
+                    def frontendIps = sh(
+                        script: """
+                          aws ec2 describe-instances \\
+                            --region ${AWS_REGION} \\
+                            --instance-ids ${instanceIds} \\
+                            --query 'Reservations[].Instances[].PrivateIpAddress' \\
+                            --output text
+                        """,
+                        returnStdout: true
+                    ).trim().split()
+
+                    echo "프론트엔드 대상 IP들: ${frontendIps}"
+                    env.FRONTEND_IPS = frontendIps.join(' ')
+                }
+            }
+        }
+        stage('Load Frontend Env From SSM') {
+            steps {
+                script {
+                    // 1) SSM에서 BACKEND_URL, API_PREFIX 한 번에 조회
+                    def output = sh(
+                        script: """
+                        aws ssm get-parameters \\
+                            --names "/community/BACKEND_URL" "/community/API_PREFIX" \\
+                            --with-decryption \\
+                            --query "Parameters[].[Name,Value]" \\
+                            --output text \\
+                            --region ${AWS_REGION} \\
+                            --no-cli-pager
+                        """,
+                        returnStdout: true
+                    ).trim()
+
+                    echo "SSM raw output:\\n${output}"
+
+                    // 2) 결과 파싱해서 Map으로 만들기
+                    def m = [:]
+                    output.split("\\n").each { line ->
+                        def parts = line.split("\\t", 2)   // tab 기준으로 Name / Value 분리
+                        if (parts.size() == 2) {
+                            def name  = parts[0]
+                            def value = parts[1]
+                            switch (name) {
+                                case '/community/BACKEND_URL':
+                                    m.BACKEND_URL = value
+                                    break
+                                case '/community/API_PREFIX':
+                                    m.API_PREFIX = value
+                                    break
+                            }
+                        }
+                    }
+
+                    if (!m.BACKEND_URL || !m.API_PREFIX) {
+                        error "SSM에서 BACKEND_URL / API_PREFIX를 모두 가져오지 못했습니다. 현재 파싱된 값: ${m}"
+                    }
+
+                    // 3) 이후 Stage에서 쓸 수 있도록 env 로 저장
+                    env.FRONTEND_BACKEND_URL = m.BACKEND_URL
+                    env.FRONTEND_API_PREFIX  = m.API_PREFIX
+
+                    echo "FRONTEND_BACKEND_URL=${env.FRONTEND_BACKEND_URL}"
+                    echo "FRONTEND_API_PREFIX=${env.FRONTEND_API_PREFIX}"
+                }
+            }
+        }
+        stage('Deploy Frontend') {
+            steps {
+                sshagent(credentials: ['ktb-personal-project-ec2-ssh-key']) {  // 🔒 SSH 키 고정
+                    script {
+                        def ipsText = env.FRONTEND_IPS?.trim()
+                        if (!ipsText) {
+                            error "프론트엔드 IP가 없습니다."
+                        }
+
+                        def ips = (ipsText.split(' ') as List<String>)
+                        echo "프론트엔드 대상 IP들(배포용): ${ips}"
+
+                        def finalTag = "fe-${params.IMAGE_DATE_TAG}".trim()
+                        echo "프론트엔드 배포 태그: ${finalTag}"
+                        echo "사용할 BACKEND_URL=${env.FRONTEND_BACKEND_URL}"
+                        echo "사용할 API_PREFIX=${env.FRONTEND_API_PREFIX}"
+
+                        ips.each { ip ->
+                            echo "프론트엔드 배포 대상: ${ip}"
+                            sh """
+                            ssh -o StrictHostKeyChecking=no ubuntu@${ip} \\
+                                'BACKEND_URL="${env.FRONTEND_BACKEND_URL}" \\
+                                API_PREFIX="${env.FRONTEND_API_PREFIX}" \\
+                                REGISTRY="${REGISTRY}" \\
+                                IMAGE_NAME="${IMAGE_NAME}" \\
+                                IMAGE_TAG="${finalTag}" \\
+                                /mnt/efs/deploy/frontend/deploy-frontend.sh'
+                            """
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
