@@ -16,7 +16,7 @@
 
 ## 데모 영상
 
-![Demo Video](docs/videos/demo.mp4)
+![Demo](docs/videos/demo.gif)
 
 ## 관련 레포지토리
 
